@@ -2,6 +2,7 @@ import Foundation
 import RealityKit
 import UIKit
 import simd
+import StarfallGalaxy
 
 enum DroneBehaviorState: String, Sendable {
     case orbitPatrol = "ORBIT PATROL"
