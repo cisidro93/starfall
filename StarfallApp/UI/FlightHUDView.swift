@@ -87,11 +87,9 @@ struct FlightHUDView: View {
 
     var body: some View {
         ZStack {
-            // 1. Center Boresight, Prograde Vector, In-Space Waypoint Diamond & Combat Lead Reticle
             CenterSpatialHUDOverlay(hud: hud)
                 .allowsHitTesting(false)
 
-            // 2. Bottom Cockpit Console: Left Nav/Target Panel, Center 3D Sensor Disc, Right Systems/Pips Panel
             VStack {
                 Spacer()
                 HStack(alignment: .bottom, spacing: 14) {
@@ -108,7 +106,6 @@ struct FlightHUDView: View {
 
                     Spacer()
 
-                    // Elite-Style 3D Holographic Sensor Disc + Compass Nav-Ball (always visible)
                     CenterSensorDiscConsole(
                         hud: hud,
                         onOpenNavMap: onOpenNavMap
@@ -138,18 +135,38 @@ struct FlightHUDView: View {
     }
 }
 
-// MARK: - Center Spatial Reticles (Boresight, Waypoint Diamond, Target Box & Predictive Lead)
+// MARK: - Center Spatial Reticles
 
 private struct CenterSpatialHUDOverlay: View {
     let hud: FlightHUDTelemetry
 
+    var body: some View {
+        ZStack {
+            BoresightReticleRing(isBoosting: hud.isBoosting, showHitMarker: hud.showHitMarker)
+
+            if hud.hasValidPrograde {
+                ProgradePipMarker(offsetX: hud.progradeOffsetX, offsetY: hud.progradeOffsetY)
+            }
+
+            WaypointSpatialMarker(hud: hud)
+
+            if hud.hasLockedTarget && hud.targetIsInFront {
+                CombatTargetSpatialMarker(hud: hud)
+            }
+        }
+    }
+}
+
+private struct BoresightReticleRing: View {
+    let isBoosting: Bool
+    let showHitMarker: Bool
+
     private var ringColor: Color {
-        hud.isBoosting ? .cyan : Color.orange.opacity(0.80)
+        isBoosting ? .cyan : Color.orange.opacity(0.80)
     }
 
     var body: some View {
         ZStack {
-            // Outer boresight brackets
             Circle()
                 .trim(from: 0.08, to: 0.42)
                 .stroke(ringColor, lineWidth: 1.8)
@@ -160,37 +177,31 @@ private struct CenterSpatialHUDOverlay: View {
                 .stroke(ringColor, lineWidth: 1.8)
                 .frame(width: 58, height: 58)
 
-            // Center nose dot
             Circle()
                 .fill(Color.orange)
                 .frame(width: 5, height: 5)
 
-            // Hit confirmation marker
-            if hud.showHitMarker {
+            if showHitMarker {
                 HitMarkerCross()
             }
-
-            // Prograde velocity vector marker
-            if hud.hasValidPrograde {
-                ZStack {
-                    Circle()
-                        .stroke(Color.cyan, lineWidth: 2.0)
-                        .frame(width: 18, height: 18)
-                    Circle()
-                        .fill(Color.cyan)
-                        .frame(width: 4, height: 4)
-                }
-                .offset(x: hud.progradeOffsetX, y: hud.progradeOffsetY)
-            }
-
-            // In-Space Projected Waypoint Diamond
-            WaypointSpatialMarker(hud: hud)
-
-            // Locked Combat Target Bracket + Vendetta Predictive Lead Reticle
-            if hud.hasLockedTarget && hud.targetIsInFront {
-                CombatTargetSpatialMarker(hud: hud)
-            }
         }
+    }
+}
+
+private struct ProgradePipMarker: View {
+    let offsetX: CGFloat
+    let offsetY: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Color.cyan, lineWidth: 2.0)
+                .frame(width: 18, height: 18)
+            Circle()
+                .fill(Color.cyan)
+                .frame(width: 4, height: 4)
+        }
+        .offset(x: offsetX, y: offsetY)
     }
 }
 
@@ -212,6 +223,22 @@ private struct HitMarkerCross: View {
 private struct WaypointSpatialMarker: View {
     let hud: FlightHUDTelemetry
 
+    private var bannerText: String {
+        "\(hud.waypointName.uppercased()) • \(hud.waypointDistanceText)"
+    }
+
+    private var edgeAngle: Double {
+        Double(atan2(hud.compassDotY, hud.compassDotX))
+    }
+
+    private var edgeOffsetX: CGFloat {
+        CGFloat(cos(edgeAngle)) * 105.0
+    }
+
+    private var edgeOffsetY: CGFloat {
+        CGFloat(sin(edgeAngle)) * 105.0
+    }
+
     var body: some View {
         if hud.waypointIsInFront {
             VStack(spacing: 3) {
@@ -224,7 +251,7 @@ private struct WaypointSpatialMarker: View {
                         .fill(Color.cyan)
                         .frame(width: 4, height: 4)
                 }
-                Text("\(hud.waypointName.uppercased()) • \(hud.waypointDistanceText)")
+                Text(bannerText)
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -234,19 +261,16 @@ private struct WaypointSpatialMarker: View {
             }
             .offset(x: hud.waypointScreenX, y: hud.waypointScreenY)
         } else {
-            // Off-screen directional perimeter indicator around center reticle
-            let angle = atan2(hud.compassDotY, hud.compassDotX)
-            let radius: CGFloat = 105.0
             VStack(spacing: 2) {
                 Image(systemName: "chevron.up.circle.fill")
                     .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(.cyan)
-                    .rotationEffect(.radians(Double(angle) + .pi * 0.5))
+                    .rotationEffect(.radians(edgeAngle + .pi * 0.5))
                 Text("WP")
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .foregroundStyle(.cyan)
             }
-            .offset(x: cos(angle) * radius, y: sin(angle) * radius)
+            .offset(x: edgeOffsetX, y: edgeOffsetY)
         }
     }
 }
@@ -254,14 +278,17 @@ private struct WaypointSpatialMarker: View {
 private struct CombatTargetSpatialMarker: View {
     let hud: FlightHUDTelemetry
 
+    private var labelText: String {
+        "\(hud.targetName) [\(Int(hud.targetShields))/\(Int(hud.targetHull))]"
+    }
+
     var body: some View {
         ZStack {
-            // Target bounding box around enemy drone
             VStack(spacing: 2) {
                 RoundedRectangle(cornerRadius: 4)
                     .stroke(Color.red, lineWidth: 2.0)
                     .frame(width: 34, height: 34)
-                Text("\(hud.targetName) [\(Int(hud.targetShields))/\(Int(hud.targetHull))]")
+                Text(labelText)
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
@@ -271,15 +298,6 @@ private struct CombatTargetSpatialMarker: View {
             }
             .offset(x: hud.targetScreenX, y: hud.targetScreenY)
 
-            // Dashed line connecting target to its Predictive Lead Reticle
-            Path { path in
-                path.move(to: CGPoint(x: hud.targetScreenX, y: hud.targetScreenY))
-                path.addLine(to: CGPoint(x: hud.leadScreenX, y: hud.leadScreenY))
-            }
-            .stroke(Color.orange.opacity(0.65), style: StrokeStyle(lineWidth: 1.2, dash: [4, 3]))
-            .frame(width: 1, height: 1)
-
-            // Vendetta-style Predictive Lead Aiming Circle
             ZStack {
                 Circle()
                     .stroke(Color.orange, lineWidth: 2.0)
@@ -299,37 +317,41 @@ private struct CenterSensorDiscConsole: View {
     let hud: FlightHUDTelemetry
     let onOpenNavMap: () -> Void
 
+    private var massLockText: String {
+        hud.isMassLocked ? "MASS LOCK" : "JUMP RDY"
+    }
+
+    private var massLockColor: Color {
+        hud.isMassLocked ? .red : .cyan
+    }
+
     var body: some View {
-        VStack(spacing: 6) {
-            HStack(alignment: .top, spacing: 12) {
-                // Elite 3D Compass Nav-Ball (Top-Left of Sensor Disc)
-                CompassNavBallView(
-                    dotX: hud.compassDotX,
-                    dotY: hud.compassDotY,
-                    isInFront: hud.waypointIsInFront
-                )
+        HStack(alignment: .top, spacing: 12) {
+            CompassNavBallView(
+                dotX: hud.compassDotX,
+                dotY: hud.compassDotY,
+                isInFront: hud.waypointIsInFront
+            )
 
-                // 3D Angled Holographic Radar Disc with vertical elevation stalks
-                HoloSensorDiscCanvas(contacts: hud.sensorContacts)
-                    .frame(width: 220, height: 118)
-                    .onTapGesture {
-                        onOpenNavMap()
-                    }
-
-                // Proximity / Mass-Lock & Kill Counter badge
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(hud.isMassLocked ? "MASS LOCK" : "JUMP RDY")
-                        .font(.system(size: 14, weight: .bold, design: .monospaced))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(hud.isMassLocked ? Color.red.opacity(0.26) : Color.cyan.opacity(0.22))
-                        .foregroundStyle(hud.isMassLocked ? .red : .cyan)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-
-                    Text("KILLS: \(hud.totalKills)")
-                        .font(.system(size: 14, weight: .bold, design: .monospaced))
-                        .foregroundStyle(.orange)
+            HoloSensorDiscView(contacts: hud.sensorContacts)
+                .frame(width: 220, height: 118)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    onOpenNavMap()
                 }
+
+            VStack(alignment: .trailing, spacing: 6) {
+                Text(massLockText)
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(massLockColor.opacity(0.24))
+                    .foregroundStyle(massLockColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                Text("KILLS: \(hud.totalKills)")
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.orange)
             }
         }
         .padding(.horizontal, 14)
@@ -357,8 +379,6 @@ private struct CompassNavBallView: View {
                 Circle()
                     .stroke(Color.orange.opacity(0.75), lineWidth: 1.5)
                     .frame(width: 44, height: 44)
-
-                // Crosshair ticks
                 Rectangle()
                     .fill(Color.orange.opacity(0.35))
                     .frame(width: 40, height: 1)
@@ -366,7 +386,6 @@ private struct CompassNavBallView: View {
                     .fill(Color.orange.opacity(0.35))
                     .frame(width: 1, height: 40)
 
-                // Waypoint bearing dot: solid cyan = ahead, hollow ring = behind
                 if isInFront {
                     Circle()
                         .fill(Color.cyan)
@@ -386,89 +405,93 @@ private struct CompassNavBallView: View {
     }
 }
 
-private struct HoloSensorDiscCanvas: View {
+private struct HoloSensorDiscView: View {
     let contacts: [SensorDiscContact]
 
     var body: some View {
-        GeometryReader { geo in
-            let cx = geo.size.width * 0.5
-            let cy = geo.size.height * 0.58
-            let rx: CGFloat = geo.size.width * 0.46
-            let ry: CGFloat = geo.size.height * 0.36
+        ZStack {
+            // Radar disc background ellipses
+            Ellipse()
+                .fill(Color.orange.opacity(0.08))
+                .frame(width: 202, height: 84)
+                .offset(y: 8)
 
-            ZStack {
-                // Outer & inner tilted 3D radar ellipses
-                Ellipse()
-                    .fill(Color.orange.opacity(0.07))
-                    .frame(width: rx * 2, height: ry * 2)
-                    .position(x: cx, y: cy)
+            Ellipse()
+                .stroke(Color.orange.opacity(0.75), lineWidth: 1.6)
+                .frame(width: 202, height: 84)
+                .offset(y: 8)
 
-                Ellipse()
-                    .stroke(Color.orange.opacity(0.75), lineWidth: 1.6)
-                    .frame(width: rx * 2, height: ry * 2)
-                    .position(x: cx, y: cy)
+            Ellipse()
+                .stroke(Color.orange.opacity(0.35), lineWidth: 1.0)
+                .frame(width: 116, height: 48)
+                .offset(y: 8)
 
-                Ellipse()
-                    .stroke(Color.orange.opacity(0.35), style: StrokeStyle(lineWidth: 1.0, dash: [4, 3]))
-                    .frame(width: rx * 1.15, height: ry * 1.15)
-                    .position(x: cx, y: cy)
+            Circle()
+                .fill(Color.white)
+                .frame(width: 6, height: 6)
+                .offset(y: 8)
 
-                // Forward sensor cone V-lines
-                Path { path in
-                    path.move(to: CGPoint(x: cx, y: cy))
-                    path.addLine(to: CGPoint(x: cx - rx * 0.62, y: cy - ry * 0.78))
-                    path.move(to: CGPoint(x: cx, y: cy))
-                    path.addLine(to: CGPoint(x: cx + rx * 0.62, y: cy - ry * 0.78))
-                }
-                .stroke(Color.cyan.opacity(0.40), lineWidth: 1.1)
-
-                // Player ship triangle at center of disc
-                Circle()
-                    .fill(Color.white)
-                    .frame(width: 6, height: 6)
-                    .position(x: cx, y: cy)
-
-                // Contacts with vertical 3D elevation stalks
-                ForEach(contacts) { c in
-                    let basePt = CGPoint(
-                        x: cx + CGFloat(c.discX) * rx,
-                        y: cy + CGFloat(c.discZ) * ry
-                    )
-                    let headPt = CGPoint(
-                        x: basePt.x,
-                        y: basePt.y - CGFloat(c.elevationY) * 28.0
-                    )
-                    let contactColor: Color = c.isHostile ? .red : (c.isStation || c.isWaypoint ? .cyan : .orange)
-
-                    // Vertical stalk from disc plane to contact 3D altitude
-                    Path { path in
-                        path.move(to: basePt)
-                        path.addLine(to: headPt)
-                    }
-                    .stroke(contactColor.opacity(0.75), lineWidth: 1.4)
-
-                    // Base foot tick on disc plane
-                    Circle()
-                        .fill(contactColor.opacity(0.45))
-                        .frame(width: 4, height: 4)
-                        .position(basePt)
-
-                    // Contact head icon
-                    Rectangle()
-                        .fill(contactColor)
-                        .frame(width: c.isLockedTarget ? 8 : 6, height: c.isLockedTarget ? 8 : 6)
-                        .overlay(
-                            Rectangle()
-                                .stroke(Color.white, lineWidth: c.isLockedTarget ? 1.5 : 0)
-                        )
-                        .position(headPt)
-                }
+            ForEach(contacts) { contact in
+                SensorContactStalkView(contact: contact)
             }
         }
     }
 }
 
-// MARK: - Left Cockpit Panel: Waypoint Navigation & Locked Combat Target
+private struct SensorContactStalkView: View {
+    let contact: SensorDiscContact
+
+    private var baseX: CGFloat {
+        CGFloat(contact.discX) * 95.0
+    }
+
+    private var baseY: CGFloat {
+        8.0 + CGFloat(contact.discZ) * 39.0
+    }
+
+    private var headY: CGFloat {
+        baseY - CGFloat(contact.elevationY) * 26.0
+    }
+
+    private var stalkHeight: CGFloat {
+        max(1.0, abs(headY - baseY))
+    }
+
+    private var stalkMidY: CGFloat {
+        (baseY + headY) * 0.5
+    }
+
+    private var markerColor: Color {
+        if contact.isHostile { return .red }
+        if contact.isStation || contact.isWaypoint { return .cyan }
+        return .orange
+    }
+
+    private var boxSize: CGFloat {
+        contact.isLockedTarget ? 8.0 : 6.0
+    }
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(markerColor.opacity(0.70))
+                .frame(width: 1.5, height: stalkHeight)
+                .offset(x: baseX, y: stalkMidY)
+
+            Circle()
+                .fill(markerColor.opacity(0.45))
+                .frame(width: 4, height: 4)
+                .offset(x: baseX, y: baseY)
+
+            Rectangle()
+                .fill(markerColor)
+                .frame(width: boxSize, height: boxSize)
+                .offset(x: baseX, y: headY)
+        }
+    }
+}
+
+// MARK: - Left Cockpit Panel
 
 private struct LeftNavAndTargetHoloPanel: View {
     let hud: FlightHUDTelemetry
@@ -478,9 +501,32 @@ private struct LeftNavAndTargetHoloPanel: View {
     let onCycleTarget: () -> Void
     let onCycleSubsystem: () -> Void
 
+    private var wpDistEtaText: String {
+        "\(hud.waypointDistanceText) • ETA \(hud.waypointETAText)"
+    }
+
+    private var jumpBtnTitle: String {
+        hud.isMassLocked ? "MASS LOCKED" : "MICRO-JUMP"
+    }
+
+    private var jumpBtnColor: Color {
+        hud.isMassLocked ? .red : .cyan
+    }
+
+    private var targetHeaderTitle: String {
+        hud.hasLockedTarget ? "TARGET: \(hud.targetName)" : "NO COMBAT TARGET"
+    }
+
+    private var targetHeaderColor: Color {
+        hud.hasLockedTarget ? .red : .secondary
+    }
+
+    private var targetHealthText: String {
+        "SHD \(Int(hud.targetShields))% • HULL \(Int(hud.targetHull))%"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Waypoint Header & Map Button
             HStack {
                 HStack(spacing: 6) {
                     Text(hud.waypointKind.iconName)
@@ -508,7 +554,7 @@ private struct LeftNavAndTargetHoloPanel: View {
                     .foregroundStyle(.cyan)
                     .lineLimit(1)
                 Spacer()
-                Text("\(hud.waypointDistanceText) • ETA \(hud.waypointETAText)")
+                Text(wpDistEtaText)
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .foregroundStyle(.white)
             }
@@ -526,12 +572,12 @@ private struct LeftNavAndTargetHoloPanel: View {
 
                 if hud.waypointSupportsLocalJump {
                     Button(action: onMicroJump) {
-                        Text(hud.isMassLocked ? "MASS LOCKED" : "MICRO-JUMP")
+                        Text(jumpBtnTitle)
                             .font(.system(size: 14, weight: .bold, design: .monospaced))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 5)
-                            .background(hud.isMassLocked ? Color.red.opacity(0.22) : Color.cyan.opacity(0.25))
-                            .foregroundStyle(hud.isMassLocked ? .red : .cyan)
+                            .background(jumpBtnColor.opacity(0.24))
+                            .foregroundStyle(jumpBtnColor)
                             .clipShape(RoundedRectangle(cornerRadius: 5))
                     }
                     .disabled(hud.isMassLocked)
@@ -541,11 +587,10 @@ private struct LeftNavAndTargetHoloPanel: View {
             Divider()
                 .overlay(Color.orange.opacity(0.35))
 
-            // Combat Target Lock Section
             HStack {
-                Text(hud.hasLockedTarget ? "TARGET: \(hud.targetName)" : "NO COMBAT TARGET")
+                Text(targetHeaderTitle)
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
-                    .foregroundStyle(hud.hasLockedTarget ? .red : .secondary)
+                    .foregroundStyle(targetHeaderColor)
                     .lineLimit(1)
                 Spacer()
                 Button(action: onCycleTarget) {
@@ -561,7 +606,7 @@ private struct LeftNavAndTargetHoloPanel: View {
 
             if hud.hasLockedTarget {
                 HStack {
-                    Text("SHD \(Int(hud.targetShields))% • HULL \(Int(hud.targetHull))%")
+                    Text(targetHealthText)
                         .font(.system(size: 14, weight: .bold, design: .monospaced))
                         .foregroundStyle(.cyan)
                     Spacer()
@@ -584,7 +629,7 @@ private struct LeftNavAndTargetHoloPanel: View {
     }
 }
 
-// MARK: - Right Cockpit Panel: Flight Systems, Shields/Hull & SYS/ENG/WEP Power Distributor
+// MARK: - Right Cockpit Panel
 
 private struct RightFlightAndPipsHoloPanel: View {
     let hud: FlightHUDTelemetry
@@ -602,15 +647,42 @@ private struct RightFlightAndPipsHoloPanel: View {
         String(format: "%03.0f", hud.speedMetresPerSec)
     }
 
+    private var speedColor: Color {
+        hud.isBoosting ? .cyan : .orange
+    }
+
+    private var playerHealthText: String {
+        "SHD \(Int(hud.playerShields))% • HULL \(Int(hud.playerHull))%"
+    }
+
+    private var wepCapText: String {
+        "WEP CAP \(Int(hud.weaponCapacitor))%"
+    }
+
+    private var boostBtnTitle: String {
+        hud.isBoosting ? "BOOSTING" : "BOOST [A]"
+    }
+
+    private var boostReadyColor: Color {
+        hud.boostChargeFraction >= 0.99 ? .cyan : .secondary
+    }
+
+    private var faTitle: String {
+        hud.flightAssistEnabled ? "FA:ON [B]" : "FA:OFF [B]"
+    }
+
+    private var faColor: Color {
+        hud.flightAssistEnabled ? .green : .orange
+    }
+
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
-            // Top Row: Player Shield/Hull + Speed Readout
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("SHD \(Int(hud.playerShields))% • HULL \(Int(hud.playerHull))%")
+                    Text(playerHealthText)
                         .font(.system(size: 14, weight: .bold, design: .monospaced))
                         .foregroundStyle(.cyan)
-                    Text("WEP CAP \(Int(hud.weaponCapacitor))%")
+                    Text(wepCapText)
                         .font(.system(size: 14, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.orange)
                 }
@@ -620,21 +692,19 @@ private struct RightFlightAndPipsHoloPanel: View {
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
                     Text(speedText)
                         .font(.system(size: 28, weight: .heavy, design: .monospaced))
-                        .foregroundStyle(hud.isBoosting ? .cyan : .orange)
+                        .foregroundStyle(speedColor)
                     Text("m/s")
                         .font(.system(size: 14, weight: .bold, design: .monospaced))
                         .foregroundStyle(.secondary)
                 }
             }
 
-            // Speed & Throttle Bar
             SpeedThrottleBar(
                 speedFraction: min(1.0, hud.speedMetresPerSec / max(1.0, hud.boostSpeed)),
                 throttleFraction: hud.throttle * (hud.maxSpeed / max(1.0, hud.boostSpeed)),
                 isBoosting: hud.isBoosting
             )
 
-            // Step 8: SYS / ENG / WEP Power Distributor Pips (D-Pad or Touch)
             PowerDistributorPipsRow(
                 sysPips: hud.sysPips,
                 engPips: hud.engPips,
@@ -645,7 +715,6 @@ private struct RightFlightAndPipsHoloPanel: View {
                 onPipReset: onPipReset
             )
 
-            // Throttle Presets & Boost
             HStack(spacing: 6) {
                 ThrottlePresetButton(title: "0%", action: { onSetThrottle(0.0) })
                 ThrottlePresetButton(title: "50%", action: { onSetThrottle(0.5) })
@@ -654,25 +723,24 @@ private struct RightFlightAndPipsHoloPanel: View {
                 Spacer()
 
                 Button(action: onTriggerBoost) {
-                    Text(hud.isBoosting ? "BOOSTING" : "BOOST [A]")
+                    Text(boostBtnTitle)
                         .font(.system(size: 14, weight: .bold, design: .monospaced))
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
-                        .background(hud.boostChargeFraction >= 0.99 ? Color.cyan.opacity(0.28) : Color.gray.opacity(0.2))
-                        .foregroundStyle(hud.boostChargeFraction >= 0.99 ? .cyan : .secondary)
+                        .background(boostReadyColor.opacity(0.22))
+                        .foregroundStyle(boostReadyColor)
                         .clipShape(RoundedRectangle(cornerRadius: 5))
                 }
             }
 
-            // Flight Assist, Camera & Live Tuning Drawer buttons
             HStack(spacing: 6) {
                 Button(action: onToggleFlightAssist) {
-                    Text(hud.flightAssistEnabled ? "FA:ON [B]" : "FA:OFF [B]")
+                    Text(faTitle)
                         .font(.system(size: 14, weight: .bold, design: .monospaced))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
-                        .background((hud.flightAssistEnabled ? Color.green : Color.orange).opacity(0.22))
-                        .foregroundStyle(hud.flightAssistEnabled ? .green : .orange)
+                        .background(faColor.opacity(0.22))
+                        .foregroundStyle(faColor)
                         .clipShape(RoundedRectangle(cornerRadius: 5))
                 }
 
@@ -748,11 +816,10 @@ private struct PipChannelButton: View {
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .foregroundStyle(color)
                 HStack(spacing: 2) {
-                    ForEach(0..<4, id: \.self) { idx in
-                        RoundedRectangle(cornerRadius: 1.5)
-                            .fill(idx < pips ? color : Color.white.opacity(0.15))
-                            .frame(width: 5, height: 11)
-                    }
+                    PipBlockView(isFilled: pips >= 1, color: color)
+                    PipBlockView(isFilled: pips >= 2, color: color)
+                    PipBlockView(isFilled: pips >= 3, color: color)
+                    PipBlockView(isFilled: pips >= 4, color: color)
                 }
             }
             .padding(.horizontal, 7)
@@ -764,10 +831,29 @@ private struct PipChannelButton: View {
     }
 }
 
+private struct PipBlockView: View {
+    let isFilled: Bool
+    let color: Color
+
+    private var fillColor: Color {
+        isFilled ? color : Color.white.opacity(0.15)
+    }
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 1.5)
+            .fill(fillColor)
+            .frame(width: 5, height: 11)
+    }
+}
+
 private struct SpeedThrottleBar: View {
     let speedFraction: Float
     let throttleFraction: Float
     let isBoosting: Bool
+
+    private var barFillColor: Color {
+        isBoosting ? .cyan : .orange
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -780,7 +866,7 @@ private struct SpeedThrottleBar: View {
                     .fill(Color.white.opacity(0.12))
 
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(isBoosting ? Color.cyan : Color.orange)
+                    .fill(barFillColor)
                     .frame(width: speedW)
 
                 Rectangle()
