@@ -162,4 +162,34 @@ final class GalaxyTests: XCTestCase {
         }
         XCTAssertGreaterThan(brightness(Int(core.x), Int(core.y)), brightness(2, 2))
     }
+
+    // MARK: Floating Origin (Step 5)
+
+    /// Simulates flying 1,000 km with a nearby companion object 12.5 m off the wing
+    /// and verifies that single-precision local positions never suffer float jitter.
+    func testFloatingOrigin1000KmFlightHasNoJitter() {
+        var frame = FloatingOriginFrame(thresholdMetres: 2_000.0)
+        var playerPos = SIMD3<Double>(0, 0, 0)
+        let wingmanOffset = SIMD3<Double>(12.5, -3.25, -18.75)
+        let stepMetres = SIMD3<Double>(400.0, 60.0, -900.0) // ~986 m per step
+        let steps = 1_050 // > 1,000 km total distance
+
+        for _ in 0..<steps {
+            playerPos += stepMetres
+            frame.updateIfNeeded(playerWorldPosition: playerPos)
+
+            let wingmanWorld = playerPos + wingmanOffset
+            let playerLocal = frame.localPosition(for: playerPos)
+            let wingmanLocal = frame.localPosition(for: wingmanWorld)
+            let relativeFloat = wingmanLocal - playerLocal
+
+            XCTAssertEqual(relativeFloat.x, Float(wingmanOffset.x), accuracy: 0.0005)
+            XCTAssertEqual(relativeFloat.y, Float(wingmanOffset.y), accuracy: 0.0005)
+            XCTAssertEqual(relativeFloat.z, Float(wingmanOffset.z), accuracy: 0.0005)
+        }
+
+        let totalDistanceKm = (playerPos.x * playerPos.x + playerPos.y * playerPos.y + playerPos.z * playerPos.z).squareRoot() / 1_000.0
+        XCTAssertGreaterThan(totalDistanceKm, 1_000.0)
+        XCTAssertGreaterThan(frame.recenterCount, 450)
+    }
 }

@@ -107,3 +107,37 @@ public struct CellCoordinate: Hashable, Codable, Sendable {
         return dx * dx + dy * dy + dz * dz
     }
 }
+
+/// Double-precision floating origin reference frame for local system flight.
+/// Stores world positions in `SIMD3<Double>` (metres) and recentres when the player
+/// moves beyond `thresholdMetres` from the current local float origin.
+public struct FloatingOriginFrame: Sendable, Codable, Equatable {
+    public var originWorldPosition: SIMD3<Double>
+    public var thresholdMetres: Double
+    public private(set) var recenterCount: Int = 0
+
+    public init(originWorldPosition: SIMD3<Double> = .zero, thresholdMetres: Double = 2_000.0) {
+        self.originWorldPosition = originWorldPosition
+        self.thresholdMetres = thresholdMetres
+    }
+
+    /// Recentres the origin onto `playerWorldPosition` if the player has moved past `thresholdMetres`.
+    @discardableResult
+    public mutating func updateIfNeeded(playerWorldPosition: SIMD3<Double>) -> Bool {
+        let delta = playerWorldPosition - originWorldPosition
+        let distSq = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z
+        if distSq > thresholdMetres * thresholdMetres {
+            originWorldPosition = playerWorldPosition
+            recenterCount += 1
+            return true
+        }
+        return false
+    }
+
+    /// Converts an absolute double-precision world position into a single-precision local transform position.
+    public func localPosition(for worldPosition: SIMD3<Double>) -> SIMD3<Float> {
+        let offset = worldPosition - originWorldPosition
+        return SIMD3<Float>(Float(offset.x), Float(offset.y), Float(offset.z))
+    }
+}
+
