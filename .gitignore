@@ -1,0 +1,20 @@
+# Xcode & XcodeGen
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+build/
+StarfallApp/Info.plist
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Build artifacts
+*.ipa
+Payload/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
