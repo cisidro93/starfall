@@ -4,6 +4,7 @@ struct FlightTuningDrawerView: View {
     @Binding var spec: ShipSpec
     @Binding var deadZone: Float
     @Binding var responseExponent: Float
+    @Binding var modernSteerMode: Bool
     @Binding var minimalHUDMode: Bool
     let onResetDefaults: () -> Void
     let onClose: () -> Void
@@ -43,6 +44,13 @@ struct FlightTuningDrawerView: View {
 
             Divider()
                 .overlay(Color.orange.opacity(0.4))
+
+            Toggle(isOn: $modernSteerMode) {
+                Text("MODERN STICK AIM (L-STICK STEERS NOSE, R-STICK THROTTLE/ROLL)")
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.green)
+            }
+            .tint(.green)
 
             Toggle(isOn: $minimalHUDMode) {
                 Text("MINIMAL / CINEMATIC HUD MODE (HIDE SIDE PANELS)")
@@ -105,7 +113,7 @@ struct FlightTuningDrawerView: View {
                     TuningSliderRow(
                         label: "FLIGHT ASSIST DAMPING",
                         value: $spec.linearDampingFA,
-                        range: 0.4...5.0,
+                        range: 0.8...8.0,
                         unit: "1/s",
                         format: "%.2f"
                     )
@@ -128,7 +136,7 @@ struct FlightTuningDrawerView: View {
             }
         }
         .padding(16)
-        .frame(width: 460, height: 470)
+        .frame(width: 480, height: 500)
         .background(Color.black.opacity(0.90))
         .overlay(
             RoundedRectangle(cornerRadius: 12)

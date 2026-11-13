@@ -8,8 +8,9 @@ final class ControllerInputManager: ObservableObject {
     @Published private(set) var controllerStatusText: String = "No Controller"
     @Published private(set) var isUsingVirtualController: Bool = false
     @Published private(set) var recentLogs: [String] = []
-    @Published var deadZone: Float = 0.10
-    @Published var responseExponent: Float = 1.80
+    @Published var deadZone: Float = 0.12
+    @Published var responseExponent: Float = 2.10
+    @Published var modernSteerMode: Bool = true
 
     private var activeController: GCController?
     private var virtualController: GCVirtualController?
@@ -73,7 +74,6 @@ final class ControllerInputManager: ObservableObject {
         let physicalControllers = allControllers.filter { $0 !== virtualGC && $0.extendedGamepad != nil }
 
         if let physical = physicalControllers.first {
-            // Physical pad found: disconnect touch fallback if active.
             if let vc = virtualController {
                 vc.disconnect()
                 virtualController = nil
@@ -149,6 +149,11 @@ final class ControllerInputManager: ObservableObject {
         appendLog("[HUD] Flight Assist: \(state.flightAssistEnabled ? "ON" : "OFF")")
     }
 
+    func toggleAutoTrack() {
+        state.autoTrackEnabled.toggle()
+        appendLog("[HUD] Target Auto-Track: \(state.autoTrackEnabled ? "ON" : "OFF")")
+    }
+
     func requestBoost() {
         pendingBoostRequest = true
         appendLog("[HUD] Boost requested")
@@ -157,7 +162,6 @@ final class ControllerInputManager: ObservableObject {
     /// Polls the active controller on each simulation tick and updates `state`.
     func pollTick(deltaTime: TimeInterval) -> InputStateComponent {
         var next = state
-        // Reset single-tick edge triggers
         next.boostTriggered = pendingBoostRequest
         pendingBoostRequest = false
         next.targetAheadTriggered = false
@@ -194,7 +198,6 @@ final class ControllerInputManager: ObservableObject {
         }
         prevRB = rbPressed
 
-        // Stick raw readings with dead-zone + response curve
         let lx = InputStateComponent.applyStickCurve(pad.leftThumbstick.xAxis.value, deadZone: deadZone, exponent: responseExponent)
         let ly = InputStateComponent.applyStickCurve(pad.leftThumbstick.yAxis.value, deadZone: deadZone, exponent: responseExponent)
         let rx = InputStateComponent.applyStickCurve(pad.rightThumbstick.xAxis.value, deadZone: deadZone, exponent: responseExponent)
@@ -202,7 +205,7 @@ final class ControllerInputManager: ObservableObject {
 
         if lbHeld {
             // Hold LB modifier layer:
-            // Left stick -> Lateral + vertical thrust
+            // Left stick -> Lateral + vertical 6DOF thrusters
             // Right stick -> Look around cockpit
             next.pitch = 0.0
             next.roll = 0.0
@@ -211,10 +214,25 @@ final class ControllerInputManager: ObservableObject {
             next.verticalThrust = ly
             next.lookYaw = rx
             next.lookPitch = ry
+        } else if modernSteerMode {
+            // Modern Steer Mode (Default):
+            // Left Stick = Pitch (Y) + Yaw/Steer Nose (X) with gentle coordinated bank
+            // Right Stick = Throttle Up/Down (Y) + Roll (X)
+            next.pitch = ly
+            next.yaw = lx
+            next.roll = abs(rx) > 0.05 ? rx : (lx * 0.28)
+            next.lateralThrust = 0.0
+            next.verticalThrust = 0.0
+            next.lookYaw = 0.0
+            next.lookPitch = 0.0
+
+            if abs(ry) > 0.08 {
+                next.throttle = min(1.0, max(0.0, next.throttle + ry * dt * 0.75))
+            }
         } else {
-            // Default layer:
-            // Left stick -> Pitch / roll
-            // Right stick -> Yaw / vertical thrust
+            // Classic Sim Mode:
+            // Left Stick = Pitch (Y) + Roll (X)
+            // Right Stick = Yaw (X) + Vertical Thrust (Y)
             next.pitch = ly
             next.roll = lx
             next.yaw = rx
@@ -235,7 +253,7 @@ final class ControllerInputManager: ObservableObject {
             next.secondaryFireHeld = false
             next.throttleDelta = rtVal - ltVal
             if abs(next.throttleDelta) > 0.05 {
-                next.throttle = min(1.0, max(0.0, next.throttle + next.throttleDelta * dt * 0.65))
+                next.throttle = min(1.0, max(0.0, next.throttle + next.throttleDelta * dt * 0.75))
             }
         } else {
             next.throttleDelta = 0.0
@@ -245,10 +263,10 @@ final class ControllerInputManager: ObservableObject {
             next.secondaryFireHeld = ltVal > 0.25
 
             if next.primaryFireHeld && !prevPrimaryFire {
-                appendLog("[RT] Primary Fire")
+                appendLog("[RT] Primary Pulse Lasers")
             }
             if next.secondaryFireHeld && !prevSecondaryFire {
-                appendLog("[LT] Secondary Fire")
+                appendLog("[LT] Gimbal Multi-Cannons")
             }
             prevPrimaryFire = next.primaryFireHeld
             prevSecondaryFire = next.secondaryFireHeld
@@ -289,7 +307,7 @@ final class ControllerInputManager: ObservableObject {
                 appendLog("[LB + \(glyph)] Next Subsystem")
             } else {
                 next.targetAheadTriggered = true
-                appendLog("[\(glyph)] Target Ahead")
+                appendLog("[\(glyph)] Target Lock")
             }
         }
         prevX = xPressed
@@ -302,7 +320,7 @@ final class ControllerInputManager: ObservableObject {
                 appendLog("[LB + \(glyph)] Cargo Scoop: \(next.cargoScoopDeployed ? "OPEN" : "CLOSED")")
             } else {
                 next.galaxyMapTriggered = true
-                appendLog("[\(glyph)] Galaxy / System Map")
+                appendLog("[\(glyph)] Nav Map")
             }
         }
         prevY = yPressed
@@ -312,7 +330,6 @@ final class ControllerInputManager: ObservableObject {
         if dUp && !prevDpadUp {
             if lbHeld {
                 next.panelNavigation = .up
-                appendLog("[LB + D-Up] Cockpit Panel UP")
             } else {
                 next.pipENG = true
                 appendLog("[D-Up] +1 Pip ENG")
@@ -324,7 +341,6 @@ final class ControllerInputManager: ObservableObject {
         if dDown && !prevDpadDown {
             if lbHeld {
                 next.panelNavigation = .down
-                appendLog("[LB + D-Down] Cockpit Panel DOWN")
             } else {
                 next.pipReset = true
                 appendLog("[D-Down] Reset Pips (2/2/2)")
@@ -336,7 +352,6 @@ final class ControllerInputManager: ObservableObject {
         if dLeft && !prevDpadLeft {
             if lbHeld {
                 next.panelNavigation = .left
-                appendLog("[LB + D-Left] Cockpit Panel LEFT")
             } else {
                 next.pipSYS = true
                 appendLog("[D-Left] +1 Pip SYS")
@@ -348,7 +363,6 @@ final class ControllerInputManager: ObservableObject {
         if dRight && !prevDpadRight {
             if lbHeld {
                 next.panelNavigation = .right
-                appendLog("[LB + D-Right] Cockpit Panel RIGHT")
             } else {
                 next.pipWEP = true
                 appendLog("[D-Right] +1 Pip WEP")
@@ -356,17 +370,16 @@ final class ControllerInputManager: ObservableObject {
         }
         prevDpadRight = dRight
 
-        // Menu / Options
         let menuPressed = pad.buttonMenu.isPressed
         if menuPressed && !prevMenu {
             next.pauseTriggered = true
-            appendLog("[Menu] Pause")
         }
         prevMenu = menuPressed
 
         let optionsPressed = pad.buttonOptions?.isPressed ?? false
         if optionsPressed && !prevOptions {
-            appendLog("[View] Cockpit Panels")
+            next.autoTrackEnabled.toggle()
+            appendLog("[Options] Auto-Track: \(next.autoTrackEnabled ? "ON" : "OFF")")
         }
         prevOptions = optionsPressed
 

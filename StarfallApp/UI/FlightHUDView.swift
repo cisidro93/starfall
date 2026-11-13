@@ -5,12 +5,13 @@ import simd
 struct FlightHUDTelemetry {
     var shipName: String = "SF-1V Kestrel"
     var speedMetresPerSec: Float = 0.0
-    var maxSpeed: Float = 280.0
-    var boostSpeed: Float = 460.0
-    var throttle: Float = 0.0
+    var maxSpeed: Float = 260.0
+    var boostSpeed: Float = 440.0
+    var throttle: Float = 0.35
     var isBoosting: Bool = false
     var boostChargeFraction: Float = 1.0
     var flightAssistEnabled: Bool = true
+    var autoTrackEnabled: Bool = true
     var hardpointsDeployed: Bool = false
     var landingGearDeployed: Bool = false
     var cameraMode: ShipCameraMode = .cockpit
@@ -28,6 +29,8 @@ struct FlightHUDTelemetry {
     var waypointSupportsLocalJump: Bool = true
     var waypointScreenX: CGFloat = 0.0
     var waypointScreenY: CGFloat = 0.0
+    var waypointIsOnScreen: Bool = true
+    var waypointBearingAngle: Double = 0.0
     var waypointIsInFront: Bool = true
     var compassDotX: CGFloat = 0.0
     var compassDotY: CGFloat = 0.0
@@ -46,7 +49,8 @@ struct FlightHUDTelemetry {
     var targetHull: Float = 100.0
     var targetScreenX: CGFloat = 0.0
     var targetScreenY: CGFloat = 0.0
-    var targetIsInFront: Bool = false
+    var targetIsOnScreen: Bool = false
+    var targetBearingAngle: Double = 0.0
     var leadScreenX: CGFloat = 0.0
     var leadScreenY: CGFloat = 0.0
     var showHitMarker: Bool = false
@@ -72,6 +76,7 @@ struct FlightHUDView: View {
     let minimalHUDMode: Bool
     let onToggleCamera: () -> Void
     let onToggleFlightAssist: () -> Void
+    let onToggleAutoTrack: () -> Void
     let onTriggerBoost: () -> Void
     let onSetThrottle: (Float) -> Void
     let onOpenNavMap: () -> Void
@@ -100,6 +105,7 @@ struct FlightHUDView: View {
                             onCycleWaypoint: onCycleWaypoint,
                             onMicroJump: onMicroJump,
                             onCycleTarget: onCycleTarget,
+                            onToggleAutoTrack: onToggleAutoTrack,
                             onCycleSubsystem: onCycleSubsystem
                         )
                     }
@@ -150,7 +156,7 @@ private struct CenterSpatialHUDOverlay: View {
 
             WaypointSpatialMarker(hud: hud)
 
-            if hud.hasLockedTarget && hud.targetIsInFront {
+            if hud.hasLockedTarget {
                 CombatTargetSpatialMarker(hud: hud)
             }
         }
@@ -167,6 +173,11 @@ private struct BoresightReticleRing: View {
 
     var body: some View {
         ZStack {
+            // Subtle 20° Gimbal Auto-Tracking Cone Ring
+            Circle()
+                .stroke(Color.orange.opacity(0.18), style: StrokeStyle(lineWidth: 1.0, dash: [6, 6]))
+                .frame(width: 210, height: 210)
+
             Circle()
                 .trim(from: 0.08, to: 0.42)
                 .stroke(ringColor, lineWidth: 1.8)
@@ -227,20 +238,16 @@ private struct WaypointSpatialMarker: View {
         "\(hud.waypointName.uppercased()) • \(hud.waypointDistanceText)"
     }
 
-    private var edgeAngle: Double {
-        Double(atan2(hud.compassDotY, hud.compassDotX))
-    }
-
     private var edgeOffsetX: CGFloat {
-        CGFloat(cos(edgeAngle)) * 105.0
+        CGFloat(cos(hud.waypointBearingAngle)) * 125.0
     }
 
     private var edgeOffsetY: CGFloat {
-        CGFloat(sin(edgeAngle)) * 105.0
+        CGFloat(sin(hud.waypointBearingAngle)) * 125.0
     }
 
     var body: some View {
-        if hud.waypointIsInFront {
+        if hud.waypointIsOnScreen {
             VStack(spacing: 3) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 3)
@@ -265,7 +272,7 @@ private struct WaypointSpatialMarker: View {
                 Image(systemName: "chevron.up.circle.fill")
                     .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(.cyan)
-                    .rotationEffect(.radians(edgeAngle + .pi * 0.5))
+                    .rotationEffect(.radians(hud.waypointBearingAngle + .pi * 0.5))
                 Text("WP")
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .foregroundStyle(.cyan)
@@ -279,34 +286,63 @@ private struct CombatTargetSpatialMarker: View {
     let hud: FlightHUDTelemetry
 
     private var labelText: String {
-        "\(hud.targetName) [\(Int(hud.targetShields))/\(Int(hud.targetHull))]"
+        "\(hud.targetName) • \(hud.targetDistanceText) [\(Int(hud.targetShields))/\(Int(hud.targetHull))]"
+    }
+
+    private var offscreenText: String {
+        "HOSTILE \(hud.targetDistanceText)"
+    }
+
+    private var edgeOffsetX: CGFloat {
+        CGFloat(cos(hud.targetBearingAngle)) * 140.0
+    }
+
+    private var edgeOffsetY: CGFloat {
+        CGFloat(sin(hud.targetBearingAngle)) * 140.0
     }
 
     var body: some View {
-        ZStack {
+        if hud.targetIsOnScreen {
+            ZStack {
+                VStack(spacing: 2) {
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(Color.red, lineWidth: 2.2)
+                        .frame(width: 40, height: 40)
+                    Text(labelText)
+                        .font(.system(size: 14, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.black.opacity(0.80))
+                        .foregroundStyle(.red)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+                .offset(x: hud.targetScreenX, y: hud.targetScreenY)
+
+                ZStack {
+                    Circle()
+                        .stroke(Color.orange, lineWidth: 2.2)
+                        .frame(width: 26, height: 26)
+                    Circle()
+                        .fill(Color.orange)
+                        .frame(width: 5, height: 5)
+                }
+                .offset(x: hud.leadScreenX, y: hud.leadScreenY)
+            }
+        } else {
             VStack(spacing: 2) {
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(Color.red, lineWidth: 2.0)
-                    .frame(width: 34, height: 34)
-                Text(labelText)
+                Image(systemName: "location.north.circle.fill")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(.red)
+                    .rotationEffect(.radians(hud.targetBearingAngle + .pi * 0.5))
+                Text(offscreenText)
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
-                    .background(Color.black.opacity(0.75))
+                    .background(Color.black.opacity(0.78))
                     .foregroundStyle(.red)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
             }
-            .offset(x: hud.targetScreenX, y: hud.targetScreenY)
-
-            ZStack {
-                Circle()
-                    .stroke(Color.orange, lineWidth: 2.0)
-                    .frame(width: 24, height: 24)
-                Circle()
-                    .fill(Color.orange)
-                    .frame(width: 5, height: 5)
-            }
-            .offset(x: hud.leadScreenX, y: hud.leadScreenY)
+            .offset(x: edgeOffsetX, y: edgeOffsetY)
         }
     }
 }
@@ -410,7 +446,6 @@ private struct HoloSensorDiscView: View {
 
     var body: some View {
         ZStack {
-            // Radar disc background ellipses
             Ellipse()
                 .fill(Color.orange.opacity(0.08))
                 .frame(width: 202, height: 84)
@@ -499,6 +534,7 @@ private struct LeftNavAndTargetHoloPanel: View {
     let onCycleWaypoint: () -> Void
     let onMicroJump: () -> Void
     let onCycleTarget: () -> Void
+    let onToggleAutoTrack: () -> Void
     let onCycleSubsystem: () -> Void
 
     private var wpDistEtaText: String {
@@ -519,6 +555,14 @@ private struct LeftNavAndTargetHoloPanel: View {
 
     private var targetHeaderColor: Color {
         hud.hasLockedTarget ? .red : .secondary
+    }
+
+    private var autoTrackTitle: String {
+        hud.autoTrackEnabled ? "AUTO-AIM:ON" : "AUTO-AIM:OFF"
+    }
+
+    private var autoTrackColor: Color {
+        hud.autoTrackEnabled ? .green : .secondary
     }
 
     private var targetHealthText: String {
@@ -587,16 +631,25 @@ private struct LeftNavAndTargetHoloPanel: View {
             Divider()
                 .overlay(Color.orange.opacity(0.35))
 
-            HStack {
+            HStack(spacing: 6) {
                 Text(targetHeaderTitle)
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .foregroundStyle(targetHeaderColor)
                     .lineLimit(1)
                 Spacer()
+                Button(action: onToggleAutoTrack) {
+                    Text(autoTrackTitle)
+                        .font(.system(size: 14, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(autoTrackColor.opacity(0.22))
+                        .foregroundStyle(autoTrackColor)
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                }
                 Button(action: onCycleTarget) {
                     Text("LOCK [X]")
                         .font(.system(size: 14, weight: .bold, design: .monospaced))
-                        .padding(.horizontal, 8)
+                        .padding(.horizontal, 7)
                         .padding(.vertical, 4)
                         .background(Color.red.opacity(0.24))
                         .foregroundStyle(.red)
@@ -618,7 +671,7 @@ private struct LeftNavAndTargetHoloPanel: View {
                 }
             }
         }
-        .frame(width: 310, alignment: .leading)
+        .frame(width: 330, alignment: .leading)
         .padding(12)
         .background(Color.black.opacity(0.70))
         .overlay(

@@ -112,7 +112,7 @@ final class CombatDroneInstance {
         self.callsign = callsign
         self.patrolCenter = patrolCenter
         self.orbitPhaseOffset = orbitPhaseOffset
-        self.worldPosition = patrolCenter + SIMD3<Double>(Double(cos(orbitPhaseOffset)) * 140.0, 0.0, Double(sin(orbitPhaseOffset)) * 140.0)
+        self.worldPosition = patrolCenter + SIMD3<Double>(Double(cos(orbitPhaseOffset)) * 130.0, 0.0, Double(sin(orbitPhaseOffset)) * 130.0)
         self.rootEntity = rootEntity
         self.shieldBubbleEntity = shieldBubbleEntity
         self.explosionEntity = explosionEntity
@@ -153,7 +153,7 @@ final class CombatSystemManager {
     func setupCombatEntities(into root: Entity) {
         guard drones.isEmpty else { return }
 
-        let patrolCenter = SIMD3<Double>(-520.0, 90.0, -680.0)
+        let patrolCenter = SIMD3<Double>(-220.0, 45.0, -480.0)
         let specs: [(String, String, Float)] = [
             ("drone_1", "SF-D1 WASP", 0.0),
             ("drone_2", "SF-D2 HORNET", 2.09),
@@ -185,7 +185,7 @@ final class CombatSystemManager {
         root.addChild(beacon)
 
         // Build Weapon Beam & Tracer visuals
-        let beamMesh = MeshResource.generateBox(size: SIMD3<Float>(0.14, 0.14, 180.0), cornerRadius: 0.05)
+        let beamMesh = MeshResource.generateBox(size: SIMD3<Float>(0.22, 0.22, 240.0), cornerRadius: 0.08)
         let beamMat = UnlitMaterial(color: UIColor(red: 0.15, green: 0.95, blue: 1.0, alpha: 1.0))
         let lBeam = ModelEntity(mesh: beamMesh, materials: [beamMat])
         let rBeam = ModelEntity(mesh: beamMesh, materials: [beamMat])
@@ -196,12 +196,22 @@ final class CombatSystemManager {
         leftLaserBeam = lBeam
         rightLaserBeam = rBeam
 
-        let boltMesh = MeshResource.generateSphere(radius: 0.45)
+        let boltMesh = MeshResource.generateSphere(radius: 0.65)
         let boltMat = UnlitMaterial(color: UIColor(red: 1.0, green: 0.72, blue: 0.20, alpha: 1.0))
         let bolt = ModelEntity(mesh: boltMesh, materials: [boltMat])
         bolt.isEnabled = false
         root.addChild(bolt)
         cannonTracerBolt = bolt
+    }
+
+    /// Returns the unit vector toward the locked target in ship-local space (where forward is -Z), if locked & alive.
+    func lockedTargetShipLocalDirection(playerWorldPos: SIMD3<Double>, playerOrientation: simd_quatf) -> SIMD3<Float>? {
+        guard let idx = lockedDroneIndex, idx < drones.count, drones[idx].isAlive else { return nil }
+        let delta = drones[idx].worldPosition - playerWorldPos
+        let len = simd_length(delta)
+        guard len > 1.0 else { return nil }
+        let unitWorld = SIMD3<Float>(Float(delta.x / len), Float(delta.y / len), Float(delta.z / len))
+        return playerOrientation.inverse.act(unitWorld)
     }
 
     func stepCombat(
@@ -228,9 +238,16 @@ final class CombatSystemManager {
             lightImpact.impactOccurred()
         }
 
+        // Auto-select next alive drone if current target was destroyed and respawned
+        if let idx = lockedDroneIndex, idx < drones.count, !drones[idx].isAlive {
+            if let nextAlive = drones.firstIndex(where: { $0.isAlive }) {
+                lockedDroneIndex = nextAlive
+            }
+        }
+
         // 3. Recharge player shields & weapon capacitor via SYS and WEP pips
         playerShields = min(100.0, playerShields + 4.2 * distributor.shieldRegenMultiplier * dt)
-        weaponCapacitor = min(100.0, weaponCapacitor + 14.0 * distributor.weaponRechargeMultiplier * dt)
+        weaponCapacitor = min(100.0, weaponCapacitor + 16.0 * distributor.weaponRechargeMultiplier * dt)
 
         // 4. Step AI drones
         let forwardFloat = playerOrientation.act(SIMD3<Float>(0, 0, -1))
@@ -243,36 +260,49 @@ final class CombatSystemManager {
             )
         }
 
-        // 5. Handle Player Weapons (RT = Fixed Pulse Lasers, LT = Gimballed Multi-Cannons)
+        // 5. Handle Player Weapons with Gimbal Auto-Convergence inside a 20° forward cone
         cannonCooldown = max(0.0, cannonCooldown - dt)
         hitMarkerTimer = max(0.0, hitMarkerTimer - dt)
 
         let playerLocal = originFrame.localPosition(for: playerWorldPos)
 
-        // Primary Fire (RT): Fixed Dual Pulse Lasers
-        if input.primaryFireHeld && weaponCapacitor >= 4.0 {
-            weaponCapacitor = max(0.0, weaponCapacitor - 22.0 * dt)
+        // Compute gimbal aim direction toward locked target (or closest target in front)
+        var gimbalAimDir = forwardFloat
+        var gimbalLockedIndex: Int?
+        var bestDot: Float = 0.935 // ~20° gimbal cone
+
+        for (idx, drone) in drones.enumerated() where drone.isAlive {
+            let deltaD = drone.worldPosition - playerWorldPos
+            let dist = Float(simd_length(deltaD))
+            guard dist < 1_100.0 && dist > 1.0 else { continue }
+            let dirToDrone = SIMD3<Float>(Float(deltaD.x), Float(deltaD.y), Float(deltaD.z)) / dist
+            let dot = simd_dot(forwardFloat, dirToDrone)
+            let bonus: Float = (lockedDroneIndex == idx) ? 0.03 : 0.0
+            if dot + bonus > bestDot {
+                bestDot = dot + bonus
+                gimbalAimDir = dirToDrone
+                gimbalLockedIndex = idx
+            }
+        }
+
+        let beamOrient = simd_quatf(from: SIMD3<Float>(0, 0, -1), to: gimbalAimDir)
+
+        // Primary Fire (RT): Gimbal-Assisted Dual Pulse Lasers
+        if input.primaryFireHeld && weaponCapacitor >= 3.0 {
+            weaponCapacitor = max(0.0, weaponCapacitor - 18.0 * dt)
             laserVisualTimer = 0.06
 
-            let leftMuzzle = playerLocal + playerOrientation.act(SIMD3<Float>(-1.85, -0.15, -92.0))
-            let rightMuzzle = playerLocal + playerOrientation.act(SIMD3<Float>(1.85, -0.15, -92.0))
-            leftLaserBeam?.position = leftMuzzle
-            leftLaserBeam?.orientation = playerOrientation
+            let leftWingOrigin = playerLocal + playerOrientation.act(SIMD3<Float>(-2.1, -0.2, -2.0))
+            let rightWingOrigin = playerLocal + playerOrientation.act(SIMD3<Float>(2.1, -0.2, -2.0))
+            leftLaserBeam?.position = leftWingOrigin + gimbalAimDir * 120.0
+            leftLaserBeam?.orientation = beamOrient
             leftLaserBeam?.isEnabled = true
-            rightLaserBeam?.position = rightMuzzle
-            rightLaserBeam?.orientation = playerOrientation
+            rightLaserBeam?.position = rightWingOrigin + gimbalAimDir * 120.0
+            rightLaserBeam?.orientation = beamOrient
             rightLaserBeam?.isEnabled = true
 
-            // Ray-cone hit check against alive drones (fixed tight 4.5° cone)
-            for (idx, drone) in drones.enumerated() where drone.isAlive {
-                let deltaD = drone.worldPosition - playerWorldPos
-                let dist = Float(simd_length(deltaD))
-                guard dist < 950.0 && dist > 1.0 else { continue }
-                let dirToDrone = SIMD3<Float>(Float(deltaD.x), Float(deltaD.y), Float(deltaD.z)) / dist
-                let cosAngle = simd_dot(forwardFloat, dirToDrone)
-                if cosAngle > 0.996 { // ~5 degrees
-                    applyDamage(to: drone, index: idx, shieldDmg: 58.0 * dt, hullDmg: 28.0 * dt)
-                }
+            if let hitIdx = gimbalLockedIndex {
+                applyDamage(to: drones[hitIdx], index: hitIdx, shieldDmg: 68.0 * dt, hullDmg: 34.0 * dt)
             }
         } else {
             laserVisualTimer = max(0.0, laserVisualTimer - dt)
@@ -282,41 +312,21 @@ final class CombatSystemManager {
             }
         }
 
-        // Secondary Fire (LT): Gimballed Multi-Cannons (wider 14° auto-tracking cone around lead vector)
+        // Secondary Fire (LT): Gimballed Multi-Cannons
         if input.secondaryFireHeld && weaponCapacitor >= 2.0 {
-            weaponCapacitor = max(0.0, weaponCapacitor - 11.0 * dt)
+            weaponCapacitor = max(0.0, weaponCapacitor - 10.0 * dt)
             cannonVisualTimer = 0.05
 
-            var aimDir = forwardFloat
-            if let lockedIdx = lockedDroneIndex, lockedIdx < drones.count, drones[lockedIdx].isAlive {
-                let drone = drones[lockedIdx]
-                let deltaD = drone.worldPosition - playerWorldPos
-                let dist = max(1.0, Float(simd_length(deltaD)))
-                let leadTime = dist / 680.0
-                let relVel = drone.velocity - playerVelocity
-                let leadDelta = SIMD3<Float>(Float(deltaD.x), Float(deltaD.y), Float(deltaD.z)) + relVel * leadTime
-                let leadDir = simd_normalize(leadDelta)
-                if simd_dot(forwardFloat, leadDir) > 0.955 { // within ~17° gimbal cone
-                    aimDir = leadDir
-                }
-            }
-
-            let tracerDist: Float = 45.0 + Float(( Int(cannonCooldown * 1000) % 70 ))
-            cannonTracerBolt?.position = playerLocal + aimDir * tracerDist
+            let tracerDist: Float = 38.0 + Float((Int(cannonCooldown * 1000) % 85))
+            cannonTracerBolt?.position = playerLocal + gimbalAimDir * tracerDist
             cannonTracerBolt?.isEnabled = true
 
             if cannonCooldown <= 0.0 {
                 cannonCooldown = 0.11
                 lightImpact.impactOccurred(intensity: 0.65)
 
-                for (idx, drone) in drones.enumerated() where drone.isAlive {
-                    let deltaD = drone.worldPosition - playerWorldPos
-                    let dist = Float(simd_length(deltaD))
-                    guard dist < 850.0 && dist > 1.0 else { continue }
-                    let dirToDrone = SIMD3<Float>(Float(deltaD.x), Float(deltaD.y), Float(deltaD.z)) / dist
-                    if simd_dot(aimDir, dirToDrone) > 0.985 {
-                        applyDamage(to: drone, index: idx, shieldDmg: 4.5, hullDmg: 11.5)
-                    }
+                if let hitIdx = gimbalLockedIndex {
+                    applyDamage(to: drones[hitIdx], index: hitIdx, shieldDmg: 6.0, hullDmg: 14.5)
                 }
             }
         } else {
@@ -329,12 +339,10 @@ final class CombatSystemManager {
 
     private func applyDamage(to drone: CombatDroneInstance, index: Int, shieldDmg: Float, hullDmg: Float) {
         hitMarkerTimer = 0.18
-        if lockedDroneIndex == nil {
-            lockedDroneIndex = index
-        }
+        lockedDroneIndex = index
         if drone.shields > 0.0 {
             drone.shields = max(0.0, drone.shields - shieldDmg)
-            drone.shieldHitFlashTimer = 0.18
+            drone.shieldHitFlashTimer = 0.20
             if drone.shields <= 25.0 {
                 drone.state = .evadeWeave
             }
@@ -342,7 +350,7 @@ final class CombatSystemManager {
             drone.hull = max(0.0, drone.hull - hullDmg)
             if drone.hull <= 0.0 {
                 drone.state = .destroyed
-                drone.respawnTimer = 6.0
+                drone.respawnTimer = 5.0
                 totalKills += 1
                 heavyImpact.impactOccurred()
                 notifyHaptic.notificationOccurred(.success)
@@ -361,8 +369,8 @@ final class CombatSystemManager {
         if drone.state == .destroyed {
             drone.respawnTimer -= dt
             drone.shieldBubbleEntity.isEnabled = false
-            if drone.respawnTimer > 4.8 {
-                let burstProgress = (6.0 - drone.respawnTimer) / 1.2
+            if drone.respawnTimer > 3.8 {
+                let burstProgress = (5.0 - drone.respawnTimer) / 1.2
                 drone.explosionEntity.isEnabled = true
                 drone.explosionEntity.scale = SIMD3<Float>(repeating: 1.0 + burstProgress * 9.0)
             } else {
@@ -382,53 +390,51 @@ final class CombatSystemManager {
         drone.explosionEntity.isEnabled = false
         drone.rootEntity.isEnabled = true
 
-        // Shield hit flash decay & slow shield regeneration
         drone.shieldHitFlashTimer = max(0.0, drone.shieldHitFlashTimer - dt)
         drone.shieldBubbleEntity.isEnabled = drone.shieldHitFlashTimer > 0.0
         if drone.shieldHitFlashTimer <= 0.0 && drone.shields < 100.0 {
-            drone.shields = min(100.0, drone.shields + 2.5 * dt)
+            drone.shields = min(100.0, drone.shields + 2.2 * dt)
         }
 
-        // State transitions based on distance to player & shields
         let distToPlayer = simd_length(playerWorldPos - drone.worldPosition)
         if drone.shields < 30.0 {
             drone.state = .evadeWeave
-        } else if distToPlayer < 520.0 {
+        } else if distToPlayer < 480.0 {
             drone.state = .strafeAttack
         } else {
             drone.state = .orbitPatrol
         }
 
-        let t = drone.aiClock * 0.55 + drone.orbitPhaseOffset
+        let t = drone.aiClock * 0.32 + drone.orbitPhaseOffset
         let targetWorldPos: SIMD3<Double>
         let desiredSpeed: Float
 
         switch drone.state {
         case .orbitPatrol:
             targetWorldPos = drone.patrolCenter + SIMD3<Double>(
-                Double(cos(t)) * 165.0,
-                Double(sin(t * 1.4)) * 38.0,
-                Double(sin(t)) * 165.0
+                Double(cos(t)) * 150.0,
+                Double(sin(t * 1.1)) * 28.0,
+                Double(sin(t)) * 150.0
             )
-            desiredSpeed = 72.0
+            desiredSpeed = 44.0
 
         case .strafeAttack:
             let strafeOffset = SIMD3<Double>(
-                Double(cos(t * 1.5)) * 190.0,
-                Double(sin(t * 2.1)) * 55.0,
-                Double(sin(t * 1.5)) * 190.0
+                Double(cos(t * 1.1)) * 180.0,
+                Double(sin(t * 1.4)) * 35.0,
+                Double(sin(t * 1.1)) * 180.0
             )
             targetWorldPos = playerWorldPos + strafeOffset
-            desiredSpeed = 95.0
+            desiredSpeed = 54.0
 
         case .evadeWeave:
             let weaveOffset = SIMD3<Double>(
-                Double(sin(t * 2.8)) * 240.0,
-                Double(cos(t * 3.2)) * 95.0,
-                Double(cos(t * 2.4)) * 240.0
+                Double(sin(t * 1.6)) * 210.0,
+                Double(cos(t * 1.9)) * 55.0,
+                Double(cos(t * 1.5)) * 210.0
             )
             targetWorldPos = drone.patrolCenter + weaveOffset
-            desiredSpeed = 122.0
+            desiredSpeed = 66.0
 
         case .destroyed:
             return
@@ -439,7 +445,7 @@ final class CombatSystemManager {
         let dirDouble = toTarget / dist
         let desiredVel = SIMD3<Float>(Float(dirDouble.x), Float(dirDouble.y), Float(dirDouble.z)) * desiredSpeed
 
-        drone.velocity += (desiredVel - drone.velocity) * min(1.0, dt * 2.8)
+        drone.velocity += (desiredVel - drone.velocity) * min(1.0, dt * 2.2)
         drone.worldPosition += SIMD3<Double>(
             Double(drone.velocity.x) * Double(dt),
             Double(drone.velocity.y) * Double(dt),
@@ -493,47 +499,59 @@ final class CombatSystemManager {
     private static func makeDroneEntity(name: String) -> (Entity, ModelEntity, ModelEntity) {
         let root = Entity()
         root.name = name
+        root.scale = SIMD3<Float>(repeating: 2.2)
 
         let armorMat = SimpleMaterial(
-            color: UIColor(red: 0.22, green: 0.24, blue: 0.29, alpha: 1.0),
-            roughness: 0.35,
+            color: UIColor(red: 0.26, green: 0.29, blue: 0.35, alpha: 1.0),
+            roughness: 0.32,
             isMetallic: true
         )
         let crimsonMat = UnlitMaterial(color: UIColor(red: 1.0, green: 0.22, blue: 0.18, alpha: 1.0))
+        let amberMat = UnlitMaterial(color: UIColor(red: 1.0, green: 0.65, blue: 0.15, alpha: 1.0))
 
         // Central aggressor fuselage
-        let coreMesh = MeshResource.generateBox(size: SIMD3<Float>(2.4, 1.1, 4.8), cornerRadius: 0.3)
+        let coreMesh = MeshResource.generateBox(size: SIMD3<Float>(2.6, 1.2, 5.2), cornerRadius: 0.35)
         let core = ModelEntity(mesh: coreMesh, materials: [armorMat])
         root.addChild(core)
 
         // Swept interceptor wings
-        let wingMesh = MeshResource.generateBox(size: SIMD3<Float>(7.2, 0.22, 2.2), cornerRadius: 0.08)
+        let wingMesh = MeshResource.generateBox(size: SIMD3<Float>(8.0, 0.26, 2.4), cornerRadius: 0.10)
         let wings = ModelEntity(mesh: wingMesh, materials: [armorMat])
         wings.position = SIMD3<Float>(0, 0, 0.3)
         root.addChild(wings)
 
+        // Bright wingtip strobe beacons so drone orientation is unmistakable at distance
+        let tipMesh = MeshResource.generateSphere(radius: 0.42)
+        let leftTip = ModelEntity(mesh: tipMesh, materials: [amberMat])
+        leftTip.position = SIMD3<Float>(-4.0, 0, 0.3)
+        root.addChild(leftTip)
+
+        let rightTip = ModelEntity(mesh: tipMesh, materials: [amberMat])
+        rightTip.position = SIMD3<Float>(4.0, 0, 0.3)
+        root.addChild(rightTip)
+
         // Glowing crimson visor & thruster eye
-        let eyeMesh = MeshResource.generateSphere(radius: 0.65)
+        let eyeMesh = MeshResource.generateSphere(radius: 0.72)
         let eye = ModelEntity(mesh: eyeMesh, materials: [crimsonMat])
-        eye.position = SIMD3<Float>(0, 0.15, -2.1)
+        eye.position = SIMD3<Float>(0, 0.18, -2.3)
         root.addChild(eye)
 
         let thrusterGlow = ModelEntity(mesh: eyeMesh, materials: [crimsonMat])
-        thrusterGlow.position = SIMD3<Float>(0, 0.0, 2.5)
+        thrusterGlow.position = SIMD3<Float>(0, 0.0, 2.7)
         root.addChild(thrusterGlow)
 
         // Translucent cyan shield bubble (flashes when hit)
-        let shieldMesh = MeshResource.generateSphere(radius: 4.5)
+        let shieldMesh = MeshResource.generateSphere(radius: 4.8)
         var shieldMat = UnlitMaterial(color: UIColor(red: 0.15, green: 0.85, blue: 1.0, alpha: 1.0))
-        shieldMat.blending = .transparent(opacity: .init(floatLiteral: 0.36))
+        shieldMat.blending = .transparent(opacity: .init(floatLiteral: 0.38))
         let shieldSphere = ModelEntity(mesh: shieldMesh, materials: [shieldMat])
         shieldSphere.isEnabled = false
         root.addChild(shieldSphere)
 
         // Orange-amber explosion fireball sphere
-        let expMesh = MeshResource.generateSphere(radius: 1.8)
+        let expMesh = MeshResource.generateSphere(radius: 2.0)
         var expMat = UnlitMaterial(color: UIColor(red: 1.0, green: 0.55, blue: 0.12, alpha: 1.0))
-        expMat.blending = .transparent(opacity: .init(floatLiteral: 0.75))
+        expMat.blending = .transparent(opacity: .init(floatLiteral: 0.78))
         let expSphere = ModelEntity(mesh: expMesh, materials: [expMat])
         expSphere.isEnabled = false
         root.addChild(expSphere)
@@ -558,13 +576,11 @@ final class CombatSystemManager {
         )
         let beaconGlow = UnlitMaterial(color: UIColor(red: 0.20, green: 0.95, blue: 0.82, alpha: 1.0))
 
-        // Shattered main truss spine
         let spineMesh = MeshResource.generateBox(size: SIMD3<Float>(8.0, 8.0, 46.0), cornerRadius: 1.0)
         let spine = ModelEntity(mesh: spineMesh, materials: [rustedHull])
         spine.orientation = simd_quatf(angle: 0.35, axis: simd_normalize(SIMD3<Float>(1, 0.5, 0.2)))
         hulkRoot.addChild(spine)
 
-        // Torn solar array wings
         let panelMesh = MeshResource.generateBox(size: SIMD3<Float>(38.0, 0.6, 12.0))
         let panelA = ModelEntity(mesh: panelMesh, materials: [brokenPanel])
         panelA.position = SIMD3<Float>(-14.0, 4.0, -6.0)
@@ -576,7 +592,6 @@ final class CombatSystemManager {
         panelB.orientation = simd_quatf(angle: 0.55, axis: SIMD3<Float>(1, 0, 1))
         hulkRoot.addChild(panelB)
 
-        // Salvage transponder beacon core
         let beaconMesh = MeshResource.generateSphere(radius: 1.8)
         let beacon = ModelEntity(mesh: beaconMesh, materials: [beaconGlow])
         beacon.position = SIMD3<Float>(0, 6.0, 0)

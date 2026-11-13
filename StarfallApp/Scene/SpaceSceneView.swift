@@ -21,10 +21,11 @@ final class SceneController: ObservableObject {
     var fixedAccumulator: Double = 0.0
     var stationRotationAngle: Float = 0.0
 
-    // Camera state
+    // Camera & viewport state for true perspective 3D->2D projection
     var cameraMode: ShipCameraMode = .cockpit
     var chaseOrientation = simd_quatf(angle: 0, axis: SIMD3<Float>(0, 1, 0))
     var currentFOV: Float = 60.0
+    var viewportSize: CGSize = CGSize(width: 1180, height: 820)
     var freeLookYaw: Float = 0.0
     var freeLookPitch: Float = 0.0
     var dragStartYaw: Float = 0.0
@@ -77,10 +78,16 @@ final class SceneController: ObservableObject {
 
     func engageLocalMicroJump(to waypoint: NavigationWaypoint) {
         guard waypoint.supportsLocalJump else { return }
-        // Place player 280 m back from the destination along their approach vector
-        let offset = SIMD3<Double>(0.0, 25.0, 280.0)
+        let offset = SIMD3<Double>(0.0, 18.0, 260.0)
         playerWorldPos.position = waypoint.worldPosition + offset
-        flight.velocity = flight.forwardVector * 120.0
+        // Point ship directly at destination upon exiting micro-jump
+        let toDest = waypoint.worldPosition - playerWorldPos.position
+        let dist = max(1.0, simd_length(toDest))
+        let fwd = SIMD3<Float>(Float(toDest.x / dist), Float(toDest.y / dist), Float(toDest.z / dist))
+        flight.orientation = simd_quatf(from: SIMD3<Float>(0, 0, -1), to: fwd)
+        chaseOrientation = flight.orientation
+        flight.angularVelocity = .zero
+        flight.velocity = fwd * 90.0
         originFrame.updateIfNeeded(playerWorldPosition: playerWorldPos.position)
         syncSceneTransforms(dt: 1.0 / 60.0)
     }
@@ -122,9 +129,13 @@ final class SceneController: ObservableObject {
             freeLookPitch *= max(0.0, 1.0 - fdt * 6.0)
         }
 
-        // Fixed 60 Hz simulation loop (scaled by Step 8 ENG distributor pips)
+        // Fixed 60 Hz simulation loop (scaled by Step 8 ENG distributor pips + Target Auto-Track)
         let engSpeedMult = combat.distributor.engineSpeedMultiplier
         let boostChargeMult = combat.distributor.boostRechargeMultiplier
+        let targetAssistDir = combat.lockedTargetShipLocalDirection(
+            playerWorldPos: playerWorldPos.position,
+            playerOrientation: flight.orientation
+        )
 
         fixedAccumulator += clampedDT
         var tickInput = input
@@ -136,7 +147,8 @@ final class SceneController: ObservableObject {
                 worldPosition: &playerWorldPos,
                 dt: Float(FlightPhysics.fixedTimeStep),
                 engineSpeedMultiplier: engSpeedMult,
-                boostRechargeMultiplier: boostChargeMult
+                boostRechargeMultiplier: boostChargeMult,
+                targetAssistLocalDir: targetAssistDir
             )
             tickInput.boostTriggered = false
             fixedAccumulator -= FlightPhysics.fixedTimeStep
@@ -227,7 +239,7 @@ final class SceneController: ObservableObject {
         }
 
         // 6. Update virtual camera position, rotation & dynamic FOV
-        let targetFOV: Float = flight.isBoosting ? 70.0 : 60.0
+        let targetFOV: Float = flight.isBoosting ? 68.0 : 60.0
         currentFOV += (targetFOV - currentFOV) * min(1.0, dt * 6.0)
         var camComp = PerspectiveCameraComponent()
         camComp.fieldOfViewInDegrees = currentFOV
@@ -266,6 +278,43 @@ final class SceneController: ObservableObject {
         return v - halfSpan
     }
 
+    /// Projects a world-space offset (relative to player) through the active `cameraEntity` perspective matrix onto 2D screen points.
+    private func projectDirectionToScreen(worldDeltaFromPlayer: SIMD3<Double>) -> (x: CGFloat, y: CGFloat, isOnScreen: Bool, bearingAngle: Double) {
+        let playerLocal = originFrame.localPosition(for: playerWorldPos.position)
+        let camOffsetFromPlayer = cameraEntity.position - playerLocal
+        let dist = simd_length(worldDeltaFromPlayer)
+
+        // For distant celestial/interstellar objects (> 5,000 m), use pure unit direction vector; for nearby objects, include camera offset.
+        let camSpaceVec: SIMD3<Float>
+        if dist > 5_000.0 {
+            let unitD = worldDeltaFromPlayer / max(1.0, dist)
+            let unitF = SIMD3<Float>(Float(unitD.x), Float(unitD.y), Float(unitD.z))
+            camSpaceVec = cameraEntity.orientation.inverse.act(unitF)
+        } else {
+            let relFloat = SIMD3<Float>(Float(worldDeltaFromPlayer.x), Float(worldDeltaFromPlayer.y), Float(worldDeltaFromPlayer.z)) - camOffsetFromPlayer
+            camSpaceVec = cameraEntity.orientation.inverse.act(relFloat)
+        }
+
+        let halfW = Float(max(400.0, viewportSize.width)) * 0.5
+        let halfH = Float(max(300.0, viewportSize.height)) * 0.5
+        let tanHalfFOV = tan((currentFOV * 0.5) * .pi / 180.0)
+        let focalLengthPts = halfH / max(0.01, tanHalfFOV)
+
+        let bearing = Double(atan2(-camSpaceVec.y, camSpaceVec.x))
+
+        guard camSpaceVec.z < -0.1 else {
+            return (0, 0, false, bearing)
+        }
+
+        let screenX = (camSpaceVec.x / -camSpaceVec.z) * focalLengthPts
+        let screenY = (-camSpaceVec.y / -camSpaceVec.z) * focalLengthPts
+        let marginX = halfW - 55.0
+        let marginY = halfH - 55.0
+        let onScreen = abs(screenX) <= marginX && abs(screenY) <= marginY
+
+        return (CGFloat(screenX), CGFloat(screenY), onScreen, bearing)
+    }
+
     private func buildHUDTelemetry(
         input: InputStateComponent,
         navManager: NavigationWaypointManager
@@ -278,12 +327,12 @@ final class SceneController: ObservableObject {
         var progradeY: CGFloat = 0.0
         var hasPrograde = false
         if spd > 2.0 {
-            let localVel = invShipRot.act(flight.velocity / spd)
-            if localVel.z < -0.05 {
+            let vDir = flight.velocity / spd
+            let proj = projectDirectionToScreen(worldDeltaFromPlayer: SIMD3<Double>(Double(vDir.x) * 10_000.0, Double(vDir.y) * 10_000.0, Double(vDir.z) * 10_000.0))
+            if proj.isOnScreen {
                 hasPrograde = true
-                let scalePts: Float = 110.0
-                progradeX = CGFloat(min(max((localVel.x / -localVel.z) * scalePts, -140.0), 140.0))
-                progradeY = CGFloat(min(max((-localVel.y / -localVel.z) * scalePts, -140.0), 140.0))
+                progradeX = proj.x
+                progradeY = proj.y
             }
         }
 
@@ -311,17 +360,11 @@ final class SceneController: ObservableObject {
         let wpDirWorld = SIMD3<Float>(Float(wpDirDouble.x), Float(wpDirDouble.y), Float(wpDirDouble.z))
         let wpLocalDir = invShipRot.act(wpDirWorld)
 
-        let wpInFront = wpLocalDir.z < -0.08
+        let wpInFront = wpLocalDir.z < -0.05
         let compassX = CGFloat(min(max(wpLocalDir.x, -1.0), 1.0))
         let compassY = CGFloat(min(max(-wpLocalDir.y, -1.0), 1.0))
 
-        var wpScreenX: CGFloat = 0.0
-        var wpScreenY: CGFloat = 0.0
-        if wpInFront {
-            let projScale: Float = 240.0
-            wpScreenX = CGFloat(min(max((wpLocalDir.x / -wpLocalDir.z) * projScale, -260.0), 260.0))
-            wpScreenY = CGFloat(min(max((-wpLocalDir.y / -wpLocalDir.z) * projScale, -155.0), 155.0))
-        }
+        let wpProj = projectDirectionToScreen(worldDeltaFromPlayer: wpDelta)
 
         let effectiveClosingSpeed = max(25.0, Double(spd))
         let etaSec = min(3599.0, wpDist / effectiveClosingSpeed)
@@ -331,9 +374,8 @@ final class SceneController: ObservableObject {
 
         // 4. Build 3D Holographic Sensor Disc Contacts
         var contacts: [SensorDiscContact] = []
-        let radarRange: Float = 1_400.0
+        let radarRange: Float = 1_200.0
 
-        // Add local waypoints (Station, Hulk, Beacon)
         for localWP in navManager.localWaypoints {
             let d = localWP.worldPosition - playerWorldPos.position
             let localVec = invShipRot.act(SIMD3<Float>(Float(d.x), Float(d.y), Float(d.z)))
@@ -354,7 +396,6 @@ final class SceneController: ObservableObject {
             )
         }
 
-        // Add alive combat drones to 3D sensor disc
         for (idx, drone) in combat.drones.enumerated() where drone.isAlive {
             let d = drone.worldPosition - playerWorldPos.position
             let localVec = invShipRot.act(SIMD3<Float>(Float(d.x), Float(d.y), Float(d.z)))
@@ -384,7 +425,8 @@ final class SceneController: ObservableObject {
         var tHull: Float = 0.0
         var tScreenX: CGFloat = 0.0
         var tScreenY: CGFloat = 0.0
-        var tInFront = false
+        var tOnScreen = false
+        var tBearing: Double = 0.0
         var leadX: CGFloat = 0.0
         var leadY: CGFloat = 0.0
 
@@ -401,25 +443,19 @@ final class SceneController: ObservableObject {
                 let dist = max(1.0, simd_length(deltaD))
                 tDistText = NavigationWaypointManager.formatDistance(dist)
 
-                let relFloat = SIMD3<Float>(Float(deltaD.x), Float(deltaD.y), Float(deltaD.z))
-                let localTarget = invShipRot.act(relFloat)
-                if localTarget.z < -1.0 {
-                    tInFront = true
-                    let projScale: Float = 240.0
-                    tScreenX = CGFloat(min(max((localTarget.x / -localTarget.z) * projScale, -260.0), 260.0))
-                    tScreenY = CGFloat(min(max((-localTarget.y / -localTarget.z) * projScale, -155.0), 155.0))
+                let targetProj = projectDirectionToScreen(worldDeltaFromPlayer: deltaD)
+                tScreenX = targetProj.x
+                tScreenY = targetProj.y
+                tOnScreen = targetProj.isOnScreen
+                tBearing = targetProj.bearingAngle
 
-                    // Predictive lead point for 680 m/s cannon projectiles
-                    let interceptTime = Float(dist) / 680.0
-                    let leadWorldRel = relFloat + (drone.velocity - flight.velocity) * interceptTime
-                    let localLead = invShipRot.act(leadWorldRel)
-                    if localLead.z < -1.0 {
-                        leadX = CGFloat(min(max((localLead.x / -localLead.z) * projScale, -270.0), 270.0))
-                        leadY = CGFloat(min(max((-localLead.y / -localLead.z) * projScale, -165.0), 165.0))
-                    } else {
-                        leadX = tScreenX
-                        leadY = tScreenY
-                    }
+                if tOnScreen {
+                    let interceptTime = Double(dist / 680.0)
+                    let relVel = drone.velocity - flight.velocity
+                    let leadDelta = deltaD + SIMD3<Double>(Double(relVel.x) * interceptTime, Double(relVel.y) * interceptTime, Double(relVel.z) * interceptTime)
+                    let leadProj = projectDirectionToScreen(worldDeltaFromPlayer: leadDelta)
+                    leadX = leadProj.isOnScreen ? leadProj.x : tScreenX
+                    leadY = leadProj.isOnScreen ? leadProj.y : tScreenY
                 }
             }
         }
@@ -435,6 +471,7 @@ final class SceneController: ObservableObject {
             isBoosting: flight.isBoosting,
             boostChargeFraction: flight.boostChargeFraction,
             flightAssistEnabled: input.flightAssistEnabled,
+            autoTrackEnabled: input.autoTrackEnabled,
             hardpointsDeployed: input.hardpointsDeployed,
             landingGearDeployed: input.landingGearDeployed,
             cameraMode: cameraMode,
@@ -446,8 +483,10 @@ final class SceneController: ObservableObject {
             waypointDistanceText: NavigationWaypointManager.formatDistance(wpDist),
             waypointETAText: etaString,
             waypointSupportsLocalJump: wp.supportsLocalJump,
-            waypointScreenX: wpScreenX,
-            waypointScreenY: wpScreenY,
+            waypointScreenX: wpProj.x,
+            waypointScreenY: wpProj.y,
+            waypointIsOnScreen: wpProj.isOnScreen,
+            waypointBearingAngle: wpProj.bearingAngle,
             waypointIsInFront: wpInFront,
             compassDotX: compassX,
             compassDotY: compassY,
@@ -462,7 +501,8 @@ final class SceneController: ObservableObject {
             targetHull: tHull,
             targetScreenX: tScreenX,
             targetScreenY: tScreenY,
-            targetIsInFront: tInFront,
+            targetIsOnScreen: tOnScreen,
+            targetBearingAngle: tBearing,
             leadScreenX: leadX,
             leadScreenY: leadY,
             showHitMarker: combat.hitMarkerTimer > 0.0,
@@ -500,105 +540,117 @@ struct SpaceSceneView: View {
     @State private var minimalHUDMode = false
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            RealityView { content in
-                content.camera = .virtual
-                sceneController.setupSceneIfNeeded()
-                content.add(sceneController.rootEntity)
+        GeometryReader { geo in
+            ZStack(alignment: .topLeading) {
+                RealityView { content in
+                    content.camera = .virtual
+                    sceneController.setupSceneIfNeeded()
+                    content.add(sceneController.rootEntity)
 
-                let metricsRef = metrics
-                let inputRef = inputManager
-                let controllerRef = sceneController
-                let navRef = navManager
+                    let metricsRef = metrics
+                    let inputRef = inputManager
+                    let controllerRef = sceneController
+                    let navRef = navManager
 
-                controllerRef.updateSubscription = content.subscribe(to: SceneEvents.Update.self) { event in
-                    MainActor.assumeIsolated {
-                        let currentInput = inputRef.pollTick(deltaTime: event.deltaTime)
-                        var toggledMap = false
-                        let latestHUD = controllerRef.stepFrame(
-                            deltaTime: event.deltaTime,
-                            input: currentInput,
-                            navManager: navRef,
-                            onToggleNavMap: { toggledMap = true }
-                        )
-                        if toggledMap {
-                            showHoloNavMap.toggle()
+                    controllerRef.updateSubscription = content.subscribe(to: SceneEvents.Update.self) { event in
+                        MainActor.assumeIsolated {
+                            let currentInput = inputRef.pollTick(deltaTime: event.deltaTime)
+                            var toggledMap = false
+                            let latestHUD = controllerRef.stepFrame(
+                                deltaTime: event.deltaTime,
+                                input: currentInput,
+                                navManager: navRef,
+                                onToggleNavMap: { toggledMap = true }
+                            )
+                            if toggledMap {
+                                showHoloNavMap.toggle()
+                            }
+                            metricsRef.recordFrame(
+                                deltaTime: event.deltaTime,
+                                rootEntity: controllerRef.rootEntity,
+                                latestHUD: latestHUD
+                            )
                         }
-                        metricsRef.recordFrame(
-                            deltaTime: event.deltaTime,
-                            rootEntity: controllerRef.rootEntity,
-                            latestHUD: latestHUD
-                        )
                     }
                 }
-            }
-            .ignoresSafeArea()
-            .gesture(freeLookDragGesture)
+                .ignoresSafeArea()
+                .gesture(freeLookDragGesture)
 
-            FlightHUDView(
-                hud: metrics.hud,
-                minimalHUDMode: minimalHUDMode,
-                onToggleCamera: { sceneController.toggleCameraMode() },
-                onToggleFlightAssist: { inputManager.toggleFlightAssist() },
-                onTriggerBoost: { inputManager.requestBoost() },
-                onSetThrottle: { inputManager.setThrottle($0) },
-                onOpenNavMap: { showHoloNavMap = true },
-                onCycleWaypoint: { navManager.cycleNextLocalWaypoint() },
-                onMicroJump: { sceneController.engageLocalMicroJump(to: navManager.activeWaypoint) },
-                onCycleTarget: { sceneController.combat.cycleNextTarget() },
-                onCycleSubsystem: {
-                    sceneController.combat.selectedSubsystemIndex =
-                        (sceneController.combat.selectedSubsystemIndex + 1) % CombatDroneInstance.subsystems.count
-                },
-                onPipSYS: { sceneController.combat.distributor.allocateSYS() },
-                onPipENG: { sceneController.combat.distributor.allocateENG() },
-                onPipWEP: { sceneController.combat.distributor.allocateWEP() },
-                onPipReset: { sceneController.combat.distributor.reset() },
-                onOpenTuningDrawer: { showTuningDrawer.toggle() }
-            )
+                FlightHUDView(
+                    hud: metrics.hud,
+                    minimalHUDMode: minimalHUDMode,
+                    onToggleCamera: { sceneController.toggleCameraMode() },
+                    onToggleFlightAssist: { inputManager.toggleFlightAssist() },
+                    onToggleAutoTrack: { inputManager.toggleAutoTrack() },
+                    onTriggerBoost: { inputManager.requestBoost() },
+                    onSetThrottle: { inputManager.setThrottle($0) },
+                    onOpenNavMap: { showHoloNavMap = true },
+                    onCycleWaypoint: { navManager.cycleNextLocalWaypoint() },
+                    onMicroJump: { sceneController.engageLocalMicroJump(to: navManager.activeWaypoint) },
+                    onCycleTarget: { sceneController.combat.cycleNextTarget() },
+                    onCycleSubsystem: {
+                        sceneController.combat.selectedSubsystemIndex =
+                            (sceneController.combat.selectedSubsystemIndex + 1) % CombatDroneInstance.subsystems.count
+                    },
+                    onPipSYS: { sceneController.combat.distributor.allocateSYS() },
+                    onPipENG: { sceneController.combat.distributor.allocateENG() },
+                    onPipWEP: { sceneController.combat.distributor.allocateWEP() },
+                    onPipReset: { sceneController.combat.distributor.reset() },
+                    onOpenTuningDrawer: { showTuningDrawer.toggle() }
+                )
 
-            DebugOverlayView(
-                metrics: metrics,
-                inputManager: inputManager,
-                showSolSheet: $showHoloNavMap
-            )
-            .padding(.top, 16)
-            .padding(.leading, 18)
+                DebugOverlayView(
+                    metrics: metrics,
+                    inputManager: inputManager,
+                    showSolSheet: $showHoloNavMap
+                )
+                .padding(.top, 16)
+                .padding(.leading, 18)
 
-            if showTuningDrawer {
-                HStack {
-                    Spacer()
-                    FlightTuningDrawerView(
-                        spec: $sceneController.flight.spec,
-                        deadZone: $inputManager.deadZone,
-                        responseExponent: $inputManager.responseExponent,
-                        minimalHUDMode: $minimalHUDMode,
-                        onResetDefaults: {
-                            sceneController.flight.spec = ShipSpec.loadStarterSpec()
-                            inputManager.deadZone = 0.10
-                            inputManager.responseExponent = 1.80
-                            minimalHUDMode = false
+                if showTuningDrawer {
+                    HStack {
+                        Spacer()
+                        FlightTuningDrawerView(
+                            spec: $sceneController.flight.spec,
+                            deadZone: $inputManager.deadZone,
+                            responseExponent: $inputManager.responseExponent,
+                            modernSteerMode: $inputManager.modernSteerMode,
+                            minimalHUDMode: $minimalHUDMode,
+                            onResetDefaults: {
+                                sceneController.flight.spec = ShipSpec.loadStarterSpec()
+                                inputManager.deadZone = 0.12
+                                inputManager.responseExponent = 2.10
+                                inputManager.modernSteerMode = true
+                                minimalHUDMode = false
+                            },
+                            onClose: { showTuningDrawer = false }
+                        )
+                        .padding(.top, 20)
+                        .padding(.trailing, 20)
+                    }
+                }
+
+                if showHoloNavMap {
+                    HoloNavigationMapView(
+                        navManager: navManager,
+                        playerWorldPosition: sceneController.playerWorldPos.position,
+                        isMassLocked: metrics.hud.isMassLocked,
+                        onEngageLocalJump: { wp in
+                            sceneController.engageLocalMicroJump(to: wp)
                         },
-                        onClose: { showTuningDrawer = false }
+                        onClose: { showHoloNavMap = false }
                     )
-                    .padding(.top, 20)
-                    .padding(.trailing, 20)
+                    .transition(.opacity)
                 }
             }
-
-            if showHoloNavMap {
-                HoloNavigationMapView(
-                    navManager: navManager,
-                    playerWorldPosition: sceneController.playerWorldPos.position,
-                    isMassLocked: metrics.hud.isMassLocked,
-                    onEngageLocalJump: { wp in
-                        sceneController.engageLocalMicroJump(to: wp)
-                    },
-                    onClose: { showHoloNavMap = false }
-                )
-                .transition(.opacity)
+            .onAppear {
+                sceneController.viewportSize = geo.size
+            }
+            .onChange(of: geo.size) { _, newSize in
+                sceneController.viewportSize = newSize
             }
         }
+        .ignoresSafeArea()
         .background(Color.black)
     }
 

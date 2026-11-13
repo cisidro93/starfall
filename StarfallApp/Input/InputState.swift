@@ -28,10 +28,11 @@ struct InputStateComponent: Component, Sendable {
     var primaryFireHeld: Bool = false
     var secondaryFireHeld: Bool = false
     var throttleDelta: Float = 0.0
-    var throttle: Float = 0.0
+    var throttle: Float = 0.35
 
     // Ship state toggles controlled by mapped buttons
     var flightAssistEnabled: Bool = true
+    var autoTrackEnabled: Bool = true
     var hardpointsDeployed: Bool = false
     var landingGearDeployed: Bool = false
     var cargoScoopDeployed: Bool = false
@@ -50,7 +51,7 @@ struct InputStateComponent: Component, Sendable {
     var cameraToggleTriggered: Bool = false
 
     /// Applies radial/axial dead-zone and a smooth non-linear response curve.
-    static func applyStickCurve(_ raw: Float, deadZone: Float = 0.10, exponent: Float = 1.8) -> Float {
+    static func applyStickCurve(_ raw: Float, deadZone: Float = 0.12, exponent: Float = 2.0) -> Float {
         let absVal = abs(raw)
         guard absVal > deadZone else { return 0.0 }
         let normalized = min(1.0, (absVal - deadZone) / max(0.001, 1.0 - deadZone))

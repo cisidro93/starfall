@@ -28,21 +28,21 @@ struct ShipSpec: Codable, Sendable, Equatable {
       "id": "sf1v_kestrel",
       "name": "SF-1V Kestrel",
       "shipClass": "Light Interceptor",
-      "maxSpeed": 280.0,
-      "reverseMaxSpeed": 140.0,
-      "boostSpeed": 460.0,
-      "forwardAcceleration": 78.0,
-      "reverseAcceleration": 48.0,
-      "lateralAcceleration": 56.0,
-      "verticalAcceleration": 56.0,
-      "pitchRateDeg": 75.0,
-      "rollRateDeg": 135.0,
-      "yawRateDeg": 36.0,
-      "angularResponse": 8.0,
-      "linearDampingFA": 2.4,
+      "maxSpeed": 260.0,
+      "reverseMaxSpeed": 130.0,
+      "boostSpeed": 440.0,
+      "forwardAcceleration": 95.0,
+      "reverseAcceleration": 65.0,
+      "lateralAcceleration": 68.0,
+      "verticalAcceleration": 68.0,
+      "pitchRateDeg": 62.0,
+      "rollRateDeg": 95.0,
+      "yawRateDeg": 58.0,
+      "angularResponse": 11.0,
+      "linearDampingFA": 5.5,
       "boostDuration": 2.2,
-      "boostCooldown": 4.8,
-      "boostAcceleration": 210.0
+      "boostCooldown": 4.5,
+      "boostAcceleration": 220.0
     }
     """
 
@@ -55,21 +55,21 @@ struct ShipSpec: Codable, Sendable, Equatable {
             id: "sf1v_kestrel",
             name: "SF-1V Kestrel",
             shipClass: "Light Interceptor",
-            maxSpeed: 280.0,
-            reverseMaxSpeed: 140.0,
-            boostSpeed: 460.0,
-            forwardAcceleration: 78.0,
-            reverseAcceleration: 48.0,
-            lateralAcceleration: 56.0,
-            verticalAcceleration: 56.0,
-            pitchRateDeg: 75.0,
-            rollRateDeg: 135.0,
-            yawRateDeg: 36.0,
-            angularResponse: 8.0,
-            linearDampingFA: 2.4,
+            maxSpeed: 260.0,
+            reverseMaxSpeed: 130.0,
+            boostSpeed: 440.0,
+            forwardAcceleration: 95.0,
+            reverseAcceleration: 65.0,
+            lateralAcceleration: 68.0,
+            verticalAcceleration: 68.0,
+            pitchRateDeg: 62.0,
+            rollRateDeg: 95.0,
+            yawRateDeg: 58.0,
+            angularResponse: 11.0,
+            linearDampingFA: 5.5,
             boostDuration: 2.2,
-            boostCooldown: 4.8,
-            boostAcceleration: 210.0
+            boostCooldown: 4.5,
+            boostAcceleration: 220.0
         )
     }
 }
@@ -140,7 +140,8 @@ enum FlightPhysics {
         worldPosition: inout WorldPositionComponent,
         dt: Float,
         engineSpeedMultiplier: Float = 1.0,
-        boostRechargeMultiplier: Float = 1.0
+        boostRechargeMultiplier: Float = 1.0,
+        targetAssistLocalDir: SIMD3<Float>? = nil
     ) {
         let spec = flight.spec
         let previousVelocity = flight.velocity
@@ -158,23 +159,53 @@ enum FlightPhysics {
             flight.boostCooldownRemaining = spec.boostCooldown
         }
 
-        // 2. Rotational 6DOF physics (Pitch = local +X, Yaw = local -Y, Roll = local -Z)
+        // 2. Rotational 6DOF physics + Precision Target Magnetism & Auto-Track
         let maxPitchRad = spec.pitchRateDeg * .pi / 180.0
         let maxRollRad = spec.rollRateDeg * .pi / 180.0
         let maxYawRad = spec.yawRateDeg * .pi / 180.0
 
+        var aimDamping: Float = 1.0
+        var assistPitchRad: Float = 0.0
+        var assistYawRad: Float = 0.0
+
+        if let tDir = targetAssistLocalDir {
+            // tDir is unit vector to locked target in ship local space (forward is -Z)
+            let forwardAlignment = -tDir.z
+            if forwardAlignment > 0.85 {
+                // Inside 31° forward cone: dampen raw stick sensitivity by up to 42% so fine aiming never overshoots
+                let proximity = min(1.0, (forwardAlignment - 0.85) / 0.15)
+                aimDamping = 1.0 - 0.42 * proximity
+            }
+
+            if input.autoTrackEnabled {
+                // Smooth proportional steering toward the locked target
+                let yawErr = tDir.x
+                let pitchErr = tDir.y
+                let trackGain: Float = (input.primaryFireHeld || input.secondaryFireHeld) ? 2.1 : 1.35
+                assistPitchRad = min(max(pitchErr * trackGain, -maxPitchRad * 0.72), maxPitchRad * 0.72)
+                assistYawRad = min(max(-yawErr * trackGain, -maxYawRad * 0.72), maxYawRad * 0.72)
+            }
+        }
+
+        // Subtle horizon self-leveling when Flight Assist is ON and pilot isn't actively rolling
+        var autoLevelRollRad: Float = 0.0
+        if input.flightAssistEnabled && abs(input.roll) < 0.05 {
+            let localWorldUp = flight.orientation.inverse.act(SIMD3<Float>(0, 1, 0))
+            if localWorldUp.y > 0.1 {
+                autoLevelRollRad = min(max(-localWorldUp.x * 1.1, -maxRollRad * 0.35), maxRollRad * 0.35)
+            }
+        }
+
         let targetAngular = SIMD3<Float>(
-            input.pitch * maxPitchRad,
-            -input.yaw * maxYawRad,
-            -input.roll * maxRollRad
+            input.pitch * maxPitchRad * aimDamping + assistPitchRad,
+            -input.yaw * maxYawRad * aimDamping + assistYawRad,
+            -input.roll * maxRollRad + autoLevelRollRad
         )
 
         if input.flightAssistEnabled {
-            // Flight Assist ON: smooth exponential convergence to commanded rotational rates.
             let blend = min(1.0, spec.angularResponse * dt)
             flight.angularVelocity += (targetAngular - flight.angularVelocity) * blend
         } else {
-            // Flight Assist OFF: stick inputs apply raw rotational acceleration; releasing does not damp spin.
             let torqueScale: Float = 2.4
             flight.angularVelocity += targetAngular * torqueScale * dt
             flight.angularVelocity.x = min(max(flight.angularVelocity.x, -maxPitchRad * 1.25), maxPitchRad * 1.25)
@@ -196,10 +227,9 @@ enum FlightPhysics {
 
         let effectiveMaxSpeed: Float = flight.isBoosting
             ? spec.boostSpeed
-            : (flight.speed > scaledMaxSpeed ? max(scaledMaxSpeed, flight.speed - 65.0 * dt) : scaledMaxSpeed)
+            : (flight.speed > scaledMaxSpeed ? max(scaledMaxSpeed, flight.speed - 75.0 * dt) : scaledMaxSpeed)
 
         if input.flightAssistEnabled {
-            // Flight Assist ON: compute desired velocity vector in ship frame and accelerate toward it.
             let forwardCommandSpeed = flight.isBoosting
                 ? spec.boostSpeed
                 : (input.throttle * scaledMaxSpeed)
@@ -213,7 +243,6 @@ enum FlightPhysics {
             let velocityError = desiredVelocity - flight.velocity
             let forwardAccel = flight.isBoosting ? spec.boostAcceleration : spec.forwardAcceleration
 
-            // Project error onto ship axes so each thruster bank respects its physical acceleration limit.
             let errFwd = simd_dot(velocityError, forward)
             let errRight = simd_dot(velocityError, right)
             let errUp = simd_dot(velocityError, up)
@@ -228,13 +257,9 @@ enum FlightPhysics {
 
             flight.velocity += forward * stepFwd + right * stepRight + up * stepUp
         } else {
-            // Flight Assist OFF: pure Newtonian thrust; existing velocity vector persists in space.
-            let fwdThrust: Float
-            if flight.isBoosting {
-                fwdThrust = spec.boostAcceleration
-            } else {
-                fwdThrust = input.throttle * spec.forwardAcceleration
-            }
+            let fwdThrust: Float = flight.isBoosting
+                ? spec.boostAcceleration
+                : (input.throttle * spec.forwardAcceleration)
             let accelWorld = forward * fwdThrust
                 + right * (input.lateralThrust * spec.lateralAcceleration)
                 + up * (input.verticalThrust * spec.verticalAcceleration)
@@ -242,13 +267,12 @@ enum FlightPhysics {
             flight.velocity += accelWorld * dt
         }
 
-        // Enforce per-ship speed cap
         let currentSpeed = simd_length(flight.velocity)
         if currentSpeed > effectiveMaxSpeed && currentSpeed > 0.001 {
             flight.velocity = (flight.velocity / currentSpeed) * effectiveMaxSpeed
         }
 
-        // 4. Compute pilot local G-force for cockpit head motion
+        // 4. Compute pilot local G-force
         let worldAccel = (flight.velocity - previousVelocity) / max(dt, 0.001)
         let invRot = flight.orientation.inverse
         let rawG = invRot.act(worldAccel) / 9.81

@@ -105,7 +105,7 @@ final class NavigationWaypointManager: ObservableObject {
         let sunWorldPos = sunDir * (earthBody.semiMajorAxisKm * 1_000.0)
 
         let gagarinPos = SIMD3<Double>(0.0, 0.0, -900.0)
-        let patrolAlphaPos = SIMD3<Double>(-520.0, 90.0, -680.0)
+        let patrolAlphaPos = SIMD3<Double>(-220.0, 45.0, -480.0)
         let derelictPos = SIMD3<Double>(480.0, -75.0, -560.0)
         let navBeaconPos = SIMD3<Double>(140.0, 110.0, -320.0)
 
