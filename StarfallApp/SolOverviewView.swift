@@ -122,6 +122,10 @@ private struct PlanetRowView: View {
         return "Moons (\(planet.moons.count)): \(names)"
     }
 
+    private var landingColor: Color {
+        planet.landing == .notLandable ? .secondary : .mint
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack {
@@ -139,7 +143,7 @@ private struct PlanetRowView: View {
                 Spacer()
                 Text(planet.landing.rawValue)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(planet.landing == .notLandable ? .secondary : .mint)
+                    .foregroundStyle(landingColor)
             }
             Text(orbitAndSizeText)
                 .font(.system(size: 15))
