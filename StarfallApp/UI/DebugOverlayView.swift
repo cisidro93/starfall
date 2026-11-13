@@ -11,17 +11,23 @@ final class DebugMetrics: ObservableObject {
     @Published var memoryText: String = "-- MB"
     @Published var thermalText: String = "Nominal"
     @Published var isWithinFrameBudget: Bool = true
-    @Published var autoPanEnabled: Bool = true
+    @Published var isExpanded: Bool = true
+    @Published var hud = FlightHUDTelemetry()
 
     private var smoothedDelta: Double = 1.0 / 60.0
     private var timeSinceLastPublish: Double = 0.0
 
-    func recordFrame(deltaTime: TimeInterval, rootEntity: Entity) {
+    func recordFrame(deltaTime: TimeInterval, rootEntity: Entity, latestHUD: FlightHUDTelemetry) {
         let clampedDelta = min(max(deltaTime, 0.001), 0.25)
         smoothedDelta = smoothedDelta * 0.9 + clampedDelta * 0.1
         timeSinceLastPublish += clampedDelta
 
-        guard timeSinceLastPublish >= 0.25 else { return }
+        // Publish HUD telemetry at ~20 Hz so gauges feel instant without saturating SwiftUI
+        if timeSinceLastPublish >= 0.05 {
+            hud = latestHUD
+        }
+
+        guard timeSinceLastPublish >= 0.20 else { return }
         timeSinceLastPublish = 0.0
 
         let fps = 1.0 / max(smoothedDelta, 0.0001)
@@ -76,14 +82,19 @@ final class DebugMetrics: ObservableObject {
 
 struct DebugOverlayView: View {
     @ObservedObject var metrics: DebugMetrics
+    @ObservedObject var inputManager: ControllerInputManager
     @Binding var showSolSheet: Bool
 
     private var budgetDotColor: Color {
         metrics.isWithinFrameBudget ? .green : .orange
     }
 
-    private var autoPanLabel: String {
-        metrics.autoPanEnabled ? "Auto-Pan: ON" : "Auto-Pan: OFF"
+    private var virtualPadButtonLabel: String {
+        inputManager.isUsingVirtualController ? "Hide Touch Pad" : "Touch Pad"
+    }
+
+    private var toggleExpandLabel: String {
+        metrics.isExpanded ? "▾ Hide" : "▸ Telemetry"
     }
 
     var body: some View {
@@ -92,47 +103,66 @@ struct DebugOverlayView: View {
                 Circle()
                     .fill(budgetDotColor)
                     .frame(width: 10, height: 10)
-                Text("STARFALL TELEMETRY")
+                Text("\(metrics.fpsText) • \(metrics.frameTimeText)")
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .foregroundStyle(.cyan)
+                Spacer()
+                Button {
+                    metrics.isExpanded.toggle()
+                } label: {
+                    Text(toggleExpandLabel)
+                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
             }
 
-            DebugMetricRow(label: "FRAME", value: "\(metrics.fpsText) (\(metrics.frameTimeText))")
-            DebugMetricRow(label: "ENTITIES", value: metrics.entityCountText)
-            DebugMetricRow(label: "MEMORY", value: metrics.memoryText)
-            DebugMetricRow(label: "THERMAL", value: metrics.thermalText)
+            if metrics.isExpanded {
+                DebugMetricRow(label: "ENTITIES", value: metrics.entityCountText)
+                DebugMetricRow(label: "MEMORY", value: metrics.memoryText)
+                DebugMetricRow(label: "THERMAL", value: metrics.thermalText)
 
-            Divider()
-                .overlay(Color.white.opacity(0.2))
+                Divider()
+                    .overlay(Color.white.opacity(0.2))
 
-            HStack(spacing: 10) {
-                Button {
-                    metrics.autoPanEnabled.toggle()
-                } label: {
-                    Text(autoPanLabel)
-                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Color.cyan.opacity(0.2))
-                        .foregroundStyle(.cyan)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                }
+                InputTelemetrySection(
+                    statusText: inputManager.controllerStatusText,
+                    state: inputManager.state,
+                    recentLogs: inputManager.recentLogs
+                )
 
-                Button {
-                    showSolSheet = true
-                } label: {
-                    Text("Sol Data")
-                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Color.orange.opacity(0.22))
-                        .foregroundStyle(.orange)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                Divider()
+                    .overlay(Color.white.opacity(0.2))
+
+                HStack(spacing: 8) {
+                    Button {
+                        inputManager.toggleVirtualController()
+                    } label: {
+                        Text(virtualPadButtonLabel)
+                            .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.purple.opacity(0.24))
+                            .foregroundStyle(.purple)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+
+                    Button {
+                        showSolSheet = true
+                    } label: {
+                        Text("Sol Data [Y]")
+                            .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.orange.opacity(0.22))
+                            .foregroundStyle(.orange)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
                 }
             }
         }
+        .frame(width: metrics.isExpanded ? 400 : 270, alignment: .leading)
         .padding(12)
-        .background(Color.black.opacity(0.68))
+        .background(Color.black.opacity(0.70))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(Color.cyan.opacity(0.35), lineWidth: 1)
@@ -141,19 +171,67 @@ struct DebugOverlayView: View {
     }
 }
 
+private struct InputTelemetrySection: View {
+    let statusText: String
+    let state: InputStateComponent
+    let recentLogs: [String]
+
+    private var rotAxesText: String {
+        String(format: "P:%+.2f  R:%+.2f  Y:%+.2f", state.pitch, state.roll, state.yaw)
+    }
+
+    private var thrAxesText: String {
+        let thrPct = Int((state.throttle * 100.0).rounded())
+        return String(format: "LAT:%+.2f VRT:%+.2f THR:%d%%", state.lateralThrust, state.verticalThrust, thrPct)
+    }
+
+    private var flagsText: String {
+        let fa = state.flightAssistEnabled ? "FA:ON" : "FA:OFF"
+        let hp = state.hardpointsDeployed ? "HP:OUT" : "HP:IN"
+        let gear = state.landingGearDeployed ? "GEAR:DN" : "GEAR:UP"
+        let mod = state.isModifierHeld ? "[LB HELD]" : ""
+        return "\(fa) • \(hp) • \(gear) \(mod)"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            DebugMetricRow(label: "PAD", value: statusText)
+            DebugMetricRow(label: "ATTITUDE", value: rotAxesText)
+            DebugMetricRow(label: "THRUST", value: thrAxesText)
+            DebugMetricRow(label: "SYSTEMS", value: flagsText)
+
+            if !recentLogs.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("INPUT LOG:")
+                        .font(.system(size: 14, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.mint)
+                    ForEach(Array(recentLogs.prefix(4).enumerated()), id: \.offset) { item in
+                        Text("› \(item.element)")
+                            .font(.system(size: 14, weight: .regular, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .lineLimit(1)
+                    }
+                }
+                .padding(.top, 2)
+            }
+        }
+    }
+}
+
 private struct DebugMetricRow: View {
     let label: String
     let value: String
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Text(label)
                 .font(.system(size: 14, weight: .medium, design: .monospaced))
                 .foregroundStyle(.secondary)
-                .frame(width: 76, alignment: .leading)
+                .frame(width: 78, alignment: .leading)
             Text(value)
                 .font(.system(size: 14, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.white)
+                .lineLimit(1)
         }
     }
 }

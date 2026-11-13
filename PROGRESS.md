@@ -3,36 +3,50 @@
 ## Completed Steps
 
 ### Step 0 & Step 1 — Repo, CI Pipeline & App Skeleton (Sol Overview)
-- **What was done:**
-  - Initialised Git repository and added `.gitignore` for Xcode, XcodeGen, SwiftPM, and unsigned IPA build outputs.
-  - Created `project.yml` (XcodeGen specification) for the iPad-only `Starfall` app target (`Swift 6.0`, landscape orientations, full screen, local package dependency on `StarfallGalaxy`, unsigned build flags).
-  - Created `StarfallApp/StarfallApp.swift` and `StarfallApp/SolOverviewView.swift` importing `StarfallGalaxy` and displaying Sol's system summary, primary G2V star details, orbital/surface stations, and all 10 major planets/dwarf planets with their moons.
-  - Added `.github/workflows/ci.yml` on `macos-15` (pinned to Xcode 16.4) running `swift test -v` in `StarfallGalaxy` and packaging `Starfall_Unsigned.ipa`.
-  - Verified on iPad via Signulous.
+- Initialised Git repository, XcodeGen `project.yml`, `StarfallApp` Sol overview, and `.github/workflows/ci.yml` producing `Starfall_Unsigned.ipa`. Verified on iPad via Signulous.
 
 ### Step 2 — Scene, Debug Overlay & App Icon
-- **What was done:**
-  - Added the 1024×1024 **Starfall** app icon (Concept 2: Astrolabe Horizon) in `StarfallApp/Assets.xcassets/AppIcon.appiconset` and configured `ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon` in `project.yml`.
-  - Updated `project.yml` deployment target to iOS 18.0 for native `RealityView` (`content.camera = .virtual`) support.
-  - Created `StarfallApp/Scene/StarfieldGenerator.swift` generating a procedural 3D starfield skybox around the origin, combining real catalogued stars from `StarfallGalaxy` (in their true galactic directions from Sol with spectral colours) with 2,600 deterministic background and Milky Way galactic-plane stars batched into 5 meshes for sub-millisecond GPU rendering.
-  - Created `StarfallApp/Scene/SpaceSceneView.swift` with a full-screen non-AR `RealityView`, a virtual `PerspectiveCameraComponent` (`FOV = 60°`), smooth auto-pan + touch drag-to-look, a centre reticle, and a `SceneEvents.Update` frame loop.
-  - Created `StarfallApp/UI/DebugOverlayView.swift` showing live **FPS**, **Frame Time (ms)**, **Entity Count**, **Memory (RSS + free headroom)**, and **Thermal State** (`ProcessInfo.processInfo.thermalState`), plus toggles for **Auto-Pan** and the **Sol Data** sheet.
+- Added Concept 2 (Astrolabe Horizon) 1024×1024 app icon, non-AR `RealityView` with virtual perspective camera, procedural starfield skybox, and `DebugOverlayView` (locked 60.0 FPS, 141 MB RAM on iPad).
 
-- **How to verify:**
-  1. Download the `Starfall_Unsigned` artifact from the latest green GitHub Actions run, sign via Signulous, and install on your iPad.
-  2. Check your iPad home screen: the **Starfall** icon should now show the gold/gunmetal Astrolabe Horizon starfighter emblem.
-  3. Launch **Starfall** in landscape:
-     - You should see the full-screen 3D starfield skybox gently panning across the Milky Way band and spectral-coloured stars (with zero camera permission prompt).
-     - Drag anywhere on the screen with one finger to look around the 3D starfield in any direction.
-     - Check the top-left **STARFALL TELEMETRY** debug overlay: it should report a green status dot, `~60.0 FPS (16.67 ms)` (or `120.0 FPS` on ProMotion), `8` entities, memory usage + available headroom in GB, and `Thermal: Nominal`.
-     - Tap **Auto-Pan: ON/OFF** to pause/resume camera rotation, and tap **Sol Data** to open the Sol system overview modal sheet.
+### Steps 3, 4, 5 & 6 (Milestone Build A) — Refined Starfield, Controller Input, 6DOF Flight, Floating Origin & 3D Sol Environment
+- **What was done:**
+  - **Starfield Visual Upgrade (`StarfieldGenerator.swift`):** Replaced solid diamond polygons with procedural radial-glow and 4-point diffraction-spike `TextureResource` sprites with UV mapping and alpha blending (`UnlitMaterial` `.transparent`), rendering pinpoint stars and glowing catalogue landmarks.
+  - **Step 3 — Controller Input (`InputState.swift`, `ControllerInputManager.swift`):**
+    - Connects to physical game controllers via `GCControllerDidConnect` / `GCControllerDidDisconnect` notifications and provides on-demand `GCVirtualController` touch fallback.
+    - Implements the full Section 6 control mapping including the **Hold LB modifier layer**, dead-zone (`0.10`), and non-linear stick response curve (`exponent = 1.8`), plus live on-screen input logging.
+  - **Step 4 — 6DOF Flight Model (`FlightModel.swift`, `ShipEntityBuilder.swift`, `FlightHUDView.swift`):**
+    - Data-driven `ShipSpec` loaded from JSON for the **SF-1V Kestrel** Light Interceptor.
+    - Fixed 60 Hz `FlightPhysics.stepFixedTick` with 6DOF rotational and linear thrusters, **Flight Assist ON** (damped velocity & angular rates) vs **Flight Assist OFF** (pure Newtonian uncoupled drift), boost impulse (`460 m/s`) with capacitor cooldown, and speed caps (`280 m/s`).
+    - Built the 3D **SF-1V Kestrel** delta starfighter mesh with twin dynamic engine plumes and a first-person **Cockpit Canopy Frame** with G-force head motion, toggleable between **Cockpit** and **Chase** cameras (`RB` or HUD button).
+    - Added the holographic `FlightHUDView` with boresight reticle, floating **Prograde Velocity Vector** drift pip, speed/throttle bar, boost capacitor status, and orbital navigation readout.
+  - **Step 5 — Double-Precision Floating Origin (`FloatingOrigin.swift`, `GalacticPosition.swift`, `GalaxyTests.swift`):**
+    - `WorldPositionComponent` and `FloatingOriginFrame` storing coordinates in `SIMD3<Double>` and recentring the local float origin whenever the player exceeds `2,000 m`.
+    - Added `testFloatingOrigin1000KmFlightHasNoJitter` unit test in `StarfallGalaxyTests` verifying sub-millimetre precision across a 1,000+ km flight (15 total unit tests).
+  - **Step 6 — Sol in 3D (`SolSceneBuilder.swift`):**
+    - Loads `Sol` from `StarfallGalaxy` (`galaxy.system(galaxy.sol.id)`): places the **Sun** (with corona shells and directional sunlight), **Earth** (with procedural continents, clouds, polar caps, and cyan atmosphere rim glow), and **Moon** at true relative scale and direction using `PlanetaryBodyComponent` camera-relative projection.
+    - Spawns the player in high Earth orbit `900 m` from **Gagarin Gateway**, a `320 m`-diameter rotating ring station with lit habitat windows, 4 spokes, a glowing cyan mail-slot docking entrance, navigation beacons, an approach buoy corridor, and wrapping space-dust speed particles.
+
+- **How to verify on iPad:**
+  1. Download `Starfall_Unsigned` from the latest green GitHub Actions run, sign with Signulous, and install on your iPad.
+  2. Connect your game controller (or tap **Touch Pad** in the top-left telemetry box).
+  3. **Visual check:**
+     - Stars are now crisp, round glowing pinpricks with diffraction spikes on bright catalogue stars.
+     - Directly ahead (`900 m`) is the rotating **Gagarin Gateway** ring station framed against **Earth** (with continents, clouds, and cyan atmosphere glow), the **Moon**, and the blazing **Sun**.
+     - You are looking out through the **SF-1V Kestrel** cockpit canopy struts with the holographic HUD in the bottom corners (tap `▾ Hide` on the top-left telemetry box anytime to collapse it to a compact FPS pill).
+  4. **Flight & Controller check:**
+     - **Throttle (`Hold LB + RT / LT` or tap `50%` / `100%` on the HUD):** Accelerate toward Gagarin Gateway; watch space-dust particles streak past and the distance readout count down.
+     - **Pitch / Roll (`Left Stick`) & Yaw / Vertical Thrust (`Right Stick`):** Bank and pitch around the rotating station ring, or fly right through the spokes.
+     - **Lateral / Vertical Thrusters (`Hold LB + Left Stick`) & Cockpit Free-Look (`Hold LB + Right Stick` or finger drag):** Strafe around the station's docking slot and look around your cockpit.
+     - **Camera Toggle (`RB` or tap `CAM: COCKPIT`):** Switch to **Chase Camera** to see your gunmetal-and-gold Kestrel starfighter banking in sunlight with twin cyan engine plumes that flare when you press **Boost (`A`)**.
+     - **Flight Assist Toggle (`B` or tap `FA: ON`):** Boost up to speed, press `B` to turn **FA: OFF**, pitch 180° around, and watch the cyan **Prograde Vector Pip** and space dust show you drifting backward in pure Newtonian flight!
+     - **Floating Origin:** Fly more than `2.0 km` away and watch `ORIGIN SHIFTS` increment on the bottom-left nav panel with zero jitter.
 
 - **Known issues:**
   - None.
 
 ## Next Step
 
-### Step 3 — Controller Input
-- Connect via `GCController` notifications (`GCControllerDidConnect` / `GCControllerDidDisconnect`) and log inputs.
-- Build an `InputState` component updated each tick with the Section 6 mapping (`LB` modifier layer, pitch/roll/yaw/thrusters, throttle, boost, FA toggle, D-pad pips) plus dead-zone and response curve on the sticks.
-- Add `GCVirtualController` touch fallback when no physical controller is connected.
+### Milestone Build B (Steps 7, 8 & 9) — Target Drones, Weapons, Power Distributor & Live Tuning Menu (Gate G1 Complete)
+- **Step 7 — Targets and Weapons:** 3 AI target drones (orbit, strafe, evade), fixed pulse lasers (`RT`) + gimballed multi-cannons (`LT`), shields vs hull, hit feedback, `GCDeviceHaptics` controller rumble, and explosions.
+- **Step 8 — Power Distributor:** `SYS / ENG / WEP` pips on the D-pad affecting shield regeneration, top speed / boost recharge, and weapon capacitor.
+- **Step 9 — Feel Pass & Live Tuning Menu:** In-app debug tuning sliders on iPad so flight and weapon parameters can be adjusted live on device without rebuilding.
