@@ -4,8 +4,9 @@ import SwiftUI
 struct StarfallApp: App {
     var body: some Scene {
         WindowGroup {
-            SolOverviewView()
+            SpaceSceneView()
                 .preferredColorScheme(.dark)
+                .statusBarHidden(true)
         }
     }
 }
