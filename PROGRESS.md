@@ -7,9 +7,9 @@
   - Initialised Git repository and added `.gitignore` for Xcode, XcodeGen, SwiftPM, and unsigned IPA build outputs.
   - Created `project.yml` (XcodeGen specification) for the iPad-only `Starfall` app target (`iOS 17.0+`, `Swift 6.0`, landscape orientations, full screen, local package dependency on `StarfallGalaxy`, unsigned build flags).
   - Created `StarfallApp/StarfallApp.swift` and `StarfallApp/SolOverviewView.swift` importing `StarfallGalaxy` and displaying Sol's system summary, primary G2V star details, orbital/surface stations (Gagarin Gateway, Armstrong Landing, Tsiolkovsky Ring, etc.), and all 10 major planets/dwarf planets with their moons, orbits, surface gravity, temperature, habitable-zone badges, and landability status.
-  - Added `.github/workflows/ci.yml` on `macos-15` (pinned to Xcode 16.2) that:
+  - Added `.github/workflows/ci.yml` on `macos-15` (pinned to Xcode 16.4) that:
     1. Runs `swift test -v` in `StarfallGalaxy` (14 unit tests).
-    2. Runs `xcodegen generate` and builds `Starfall` for `generic/platform=iOS` (`Release`, `CODE_SIGNING_ALLOWED=NO`).
+    2. Runs `xcodegen generate` and builds `Starfall` for `-sdk iphoneos` (`Release`, `CODE_SIGNING_ALLOWED=NO`).
     3. Packages `Payload/Starfall.app` into `Starfall_Unsigned.ipa` and uploads it as the `Starfall_Unsigned` build artifact.
 
 - **How to verify:**
