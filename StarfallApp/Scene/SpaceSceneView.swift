@@ -12,8 +12,10 @@ final class SceneController: ObservableObject {
     var solEnv: SolSceneBuilder.BuiltSolEnvironment?
     var updateSubscription: EventSubscription?
 
+    let combat = CombatSystemManager()
+
     // Fixed 60 Hz simulation state
-    var flight = FlightComponent()
+    @Published var flight = FlightComponent()
     var playerWorldPos = WorldPositionComponent(.zero)
     var originFrame = FloatingOriginFrame(originWorldPosition: .zero, thresholdMetres: 2_000.0)
     var fixedAccumulator: Double = 0.0
@@ -47,12 +49,15 @@ final class SceneController: ObservableObject {
         let env = SolSceneBuilder.buildSolEnvironment(into: rootEntity)
         solEnv = env
 
-        // 3. Player starfighter (SF-1V Kestrel)
+        // 3. Combat drones, Forsaken Relay Hulk, Nav Beacon & weapon tracer beams
+        combat.setupCombatEntities(into: rootEntity)
+
+        // 4. Player starfighter (SF-1V Kestrel)
         let ship = ShipEntityBuilder.makeKestrelShip()
         rootEntity.addChild(ship.root)
         builtShip = ship
 
-        // 4. Virtual perspective camera
+        // 5. Virtual perspective camera
         cameraEntity.name = "MainVirtualCamera"
         var camera = PerspectiveCameraComponent()
         camera.fieldOfViewInDegrees = 60.0
@@ -70,6 +75,16 @@ final class SceneController: ObservableObject {
         applyCameraModeVisibility()
     }
 
+    func engageLocalMicroJump(to waypoint: NavigationWaypoint) {
+        guard waypoint.supportsLocalJump else { return }
+        // Place player 280 m back from the destination along their approach vector
+        let offset = SIMD3<Double>(0.0, 25.0, 280.0)
+        playerWorldPos.position = waypoint.worldPosition + offset
+        flight.velocity = flight.forwardVector * 120.0
+        originFrame.updateIfNeeded(playerWorldPosition: playerWorldPos.position)
+        syncSceneTransforms(dt: 1.0 / 60.0)
+    }
+
     private func applyCameraModeVisibility() {
         guard let ship = builtShip else { return }
         switch cameraMode {
@@ -85,7 +100,8 @@ final class SceneController: ObservableObject {
     func stepFrame(
         deltaTime: TimeInterval,
         input: InputStateComponent,
-        onToggleSolSheet: () -> Void
+        navManager: NavigationWaypointManager,
+        onToggleNavMap: () -> Void
     ) -> FlightHUDTelemetry {
         let clampedDT = min(max(deltaTime, 0.001), 0.1)
         let fdt = Float(clampedDT)
@@ -94,7 +110,7 @@ final class SceneController: ObservableObject {
             toggleCameraMode()
         }
         if input.galaxyMapTriggered {
-            onToggleSolSheet()
+            onToggleNavMap()
         }
 
         // Free-look via Hold LB + Right Stick (or return smoothly to center when released)
@@ -106,7 +122,10 @@ final class SceneController: ObservableObject {
             freeLookPitch *= max(0.0, 1.0 - fdt * 6.0)
         }
 
-        // Fixed 60 Hz simulation loop
+        // Fixed 60 Hz simulation loop (scaled by Step 8 ENG distributor pips)
+        let engSpeedMult = combat.distributor.engineSpeedMultiplier
+        let boostChargeMult = combat.distributor.boostRechargeMultiplier
+
         fixedAccumulator += clampedDT
         var tickInput = input
         var steps = 0
@@ -115,9 +134,10 @@ final class SceneController: ObservableObject {
                 flight: &flight,
                 input: tickInput,
                 worldPosition: &playerWorldPos,
-                dt: Float(FlightPhysics.fixedTimeStep)
+                dt: Float(FlightPhysics.fixedTimeStep),
+                engineSpeedMultiplier: engSpeedMult,
+                boostRechargeMultiplier: boostChargeMult
             )
-            // Consume single-tick triggers after the first fixed step
             tickInput.boostTriggered = false
             fixedAccumulator -= FlightPhysics.fixedTimeStep
             steps += 1
@@ -125,6 +145,16 @@ final class SceneController: ObservableObject {
 
         // Floating origin recentring check (every time player exceeds 2,000 m from local origin)
         originFrame.updateIfNeeded(playerWorldPosition: playerWorldPos.position)
+
+        // Step combat drones, weapons & power distributor pips
+        combat.stepCombat(
+            dt: fdt,
+            input: input,
+            playerWorldPos: playerWorldPos.position,
+            playerVelocity: flight.velocity,
+            playerOrientation: flight.orientation,
+            originFrame: originFrame
+        )
 
         // Rotate Gagarin Gateway habitat wheel
         stationRotationAngle += fdt * 0.16
@@ -136,7 +166,7 @@ final class SceneController: ObservableObject {
         // Update all camera-relative & local-origin entity transforms
         syncSceneTransforms(dt: fdt)
 
-        return buildHUDTelemetry(input: input)
+        return buildHUDTelemetry(input: input, navManager: navManager)
     }
 
     private func syncSceneTransforms(dt: Float) {
@@ -162,7 +192,7 @@ final class SceneController: ObservableObject {
             ship.rightPlume.scale = plumeScale
         }
 
-        // 3. Update local world-positioned objects (station & approach buoys)
+        // 3. Update local world-positioned objects (station, buoys, hulk, beacon, drones)
         for child in rootEntity.children where child !== builtShip?.root {
             if let wp = child.components[WorldPositionComponent.self] {
                 child.position = originFrame.localPosition(for: wp.position)
@@ -210,7 +240,6 @@ final class SceneController: ObservableObject {
 
         switch cameraMode {
         case .cockpit:
-            // Subtle pilot head G-force offset inside cockpit
             let gOffset = SIMD3<Float>(
                 min(max(-flight.localGForce.x * 0.012, -0.06), 0.06),
                 min(max(-flight.localGForce.y * 0.012, -0.05), 0.05),
@@ -237,44 +266,170 @@ final class SceneController: ObservableObject {
         return v - halfSpan
     }
 
-    private func buildHUDTelemetry(input: InputStateComponent) -> FlightHUDTelemetry {
+    private func buildHUDTelemetry(
+        input: InputStateComponent,
+        navManager: NavigationWaypointManager
+    ) -> FlightHUDTelemetry {
+        let invShipRot = flight.orientation.inverse
+        let spd = flight.speed
+
+        // 1. Prograde velocity vector projection
         var progradeX: CGFloat = 0.0
         var progradeY: CGFloat = 0.0
         var hasPrograde = false
-
-        let spd = flight.speed
         if spd > 2.0 {
-            let localVel = flight.orientation.inverse.act(flight.velocity / spd)
+            let localVel = invShipRot.act(flight.velocity / spd)
             if localVel.z < -0.05 {
                 hasPrograde = true
                 let scalePts: Float = 110.0
-                progradeX = CGFloat(min(max((localVel.x / -localVel.z) * scalePts, -130.0), 130.0))
-                progradeY = CGFloat(min(max((-localVel.y / -localVel.z) * scalePts, -130.0), 130.0))
+                progradeX = CGFloat(min(max((localVel.x / -localVel.z) * scalePts, -140.0), 140.0))
+                progradeY = CGFloat(min(max((-localVel.y / -localVel.z) * scalePts, -140.0), 140.0))
             }
         }
 
+        // 2. Orbital distances & Mass-Lock status
         let stationDist: Double
         let earthAltKm: Double
         let moonDistKm: Double
-        let stationName: String
-
         if let env = solEnv {
-            stationName = env.stationName
             stationDist = simd_length(env.stationWorldPosition - playerWorldPos.position)
             let earthCentreDist = simd_length(env.earthWorldPosition - playerWorldPos.position)
             earthAltKm = max(0.0, (earthCentreDist - env.earthRadiusMetres) / 1_000.0)
             moonDistKm = simd_length(env.moonWorldPosition - playerWorldPos.position) / 1_000.0
         } else {
-            stationName = "Gagarin Gateway"
             stationDist = 900.0
             earthAltKm = 9_100.0
             moonDistKm = 384_400.0
         }
+        let isMassLocked = stationDist < 450.0
+
+        // 3. Active Waypoint Projection & 3D Compass Nav-Ball
+        let wp = navManager.activeWaypoint
+        let wpDelta = wp.worldPosition - playerWorldPos.position
+        let wpDist = max(1.0, simd_length(wpDelta))
+        let wpDirDouble = wpDelta / wpDist
+        let wpDirWorld = SIMD3<Float>(Float(wpDirDouble.x), Float(wpDirDouble.y), Float(wpDirDouble.z))
+        let wpLocalDir = invShipRot.act(wpDirWorld)
+
+        let wpInFront = wpLocalDir.z < -0.08
+        let compassX = CGFloat(min(max(wpLocalDir.x, -1.0), 1.0))
+        let compassY = CGFloat(min(max(-wpLocalDir.y, -1.0), 1.0))
+
+        var wpScreenX: CGFloat = 0.0
+        var wpScreenY: CGFloat = 0.0
+        if wpInFront {
+            let projScale: Float = 240.0
+            wpScreenX = CGFloat(min(max((wpLocalDir.x / -wpLocalDir.z) * projScale, -260.0), 260.0))
+            wpScreenY = CGFloat(min(max((-wpLocalDir.y / -wpLocalDir.z) * projScale, -155.0), 155.0))
+        }
+
+        let effectiveClosingSpeed = max(25.0, Double(spd))
+        let etaSec = min(3599.0, wpDist / effectiveClosingSpeed)
+        let etaMin = Int(etaSec) / 60
+        let etaRemSec = Int(etaSec) % 60
+        let etaString = wpDist > 1.0e9 ? "JUMP" : String(format: "%d:%02d", etaMin, etaRemSec)
+
+        // 4. Build 3D Holographic Sensor Disc Contacts
+        var contacts: [SensorDiscContact] = []
+        let radarRange: Float = 1_400.0
+
+        // Add local waypoints (Station, Hulk, Beacon)
+        for localWP in navManager.localWaypoints {
+            let d = localWP.worldPosition - playerWorldPos.position
+            let localVec = invShipRot.act(SIMD3<Float>(Float(d.x), Float(d.y), Float(d.z)))
+            let normVec = localVec / radarRange
+            let clampedXZ = Self.clampToUnitCircle(x: normVec.x, z: normVec.z)
+            contacts.append(
+                SensorDiscContact(
+                    id: localWP.id,
+                    label: localWP.name,
+                    discX: clampedXZ.x,
+                    discZ: clampedXZ.z,
+                    elevationY: min(max(normVec.y, -1.0), 1.0),
+                    isHostile: false,
+                    isLockedTarget: false,
+                    isStation: localWP.kind == .station,
+                    isWaypoint: localWP.id == wp.id
+                )
+            )
+        }
+
+        // Add alive combat drones to 3D sensor disc
+        for (idx, drone) in combat.drones.enumerated() where drone.isAlive {
+            let d = drone.worldPosition - playerWorldPos.position
+            let localVec = invShipRot.act(SIMD3<Float>(Float(d.x), Float(d.y), Float(d.z)))
+            let normVec = localVec / radarRange
+            let clampedXZ = Self.clampToUnitCircle(x: normVec.x, z: normVec.z)
+            contacts.append(
+                SensorDiscContact(
+                    id: drone.id,
+                    label: drone.callsign,
+                    discX: clampedXZ.x,
+                    discZ: clampedXZ.z,
+                    elevationY: min(max(normVec.y, -1.0), 1.0),
+                    isHostile: true,
+                    isLockedTarget: combat.lockedDroneIndex == idx,
+                    isStation: false,
+                    isWaypoint: false
+                )
+            )
+        }
+
+        // 5. Locked Combat Target & Vendetta Predictive Lead Reticle Projection
+        var hasTarget = false
+        var tName = "NO TARGET"
+        var tState = ""
+        var tDistText = "--"
+        var tShields: Float = 0.0
+        var tHull: Float = 0.0
+        var tScreenX: CGFloat = 0.0
+        var tScreenY: CGFloat = 0.0
+        var tInFront = false
+        var leadX: CGFloat = 0.0
+        var leadY: CGFloat = 0.0
+
+        if let lockedIdx = combat.lockedDroneIndex, lockedIdx < combat.drones.count {
+            let drone = combat.drones[lockedIdx]
+            if drone.isAlive {
+                hasTarget = true
+                tName = drone.callsign
+                tState = drone.state.rawValue
+                tShields = drone.shields
+                tHull = drone.hull
+
+                let deltaD = drone.worldPosition - playerWorldPos.position
+                let dist = max(1.0, simd_length(deltaD))
+                tDistText = NavigationWaypointManager.formatDistance(dist)
+
+                let relFloat = SIMD3<Float>(Float(deltaD.x), Float(deltaD.y), Float(deltaD.z))
+                let localTarget = invShipRot.act(relFloat)
+                if localTarget.z < -1.0 {
+                    tInFront = true
+                    let projScale: Float = 240.0
+                    tScreenX = CGFloat(min(max((localTarget.x / -localTarget.z) * projScale, -260.0), 260.0))
+                    tScreenY = CGFloat(min(max((-localTarget.y / -localTarget.z) * projScale, -155.0), 155.0))
+
+                    // Predictive lead point for 680 m/s cannon projectiles
+                    let interceptTime = Float(dist) / 680.0
+                    let leadWorldRel = relFloat + (drone.velocity - flight.velocity) * interceptTime
+                    let localLead = invShipRot.act(leadWorldRel)
+                    if localLead.z < -1.0 {
+                        leadX = CGFloat(min(max((localLead.x / -localLead.z) * projScale, -270.0), 270.0))
+                        leadY = CGFloat(min(max((-localLead.y / -localLead.z) * projScale, -165.0), 165.0))
+                    } else {
+                        leadX = tScreenX
+                        leadY = tScreenY
+                    }
+                }
+            }
+        }
+
+        let subsystemName = CombatDroneInstance.subsystems[combat.selectedSubsystemIndex % CombatDroneInstance.subsystems.count]
 
         return FlightHUDTelemetry(
             shipName: flight.spec.name,
             speedMetresPerSec: spd,
-            maxSpeed: flight.spec.maxSpeed,
+            maxSpeed: flight.spec.maxSpeed * combat.distributor.engineSpeedMultiplier,
             boostSpeed: flight.spec.boostSpeed,
             throttle: input.throttle,
             isBoosting: flight.isBoosting,
@@ -286,12 +441,51 @@ final class SceneController: ObservableObject {
             progradeOffsetX: progradeX,
             progradeOffsetY: progradeY,
             hasValidPrograde: hasPrograde,
-            stationName: stationName,
+            waypointName: wp.name,
+            waypointKind: wp.kind,
+            waypointDistanceText: NavigationWaypointManager.formatDistance(wpDist),
+            waypointETAText: etaString,
+            waypointSupportsLocalJump: wp.supportsLocalJump,
+            waypointScreenX: wpScreenX,
+            waypointScreenY: wpScreenY,
+            waypointIsInFront: wpInFront,
+            compassDotX: compassX,
+            compassDotY: compassY,
+            isMassLocked: isMassLocked,
+            sensorContacts: contacts,
+            hasLockedTarget: hasTarget,
+            targetName: tName,
+            targetStateText: tState,
+            targetSubsystem: subsystemName,
+            targetDistanceText: tDistText,
+            targetShields: tShields,
+            targetHull: tHull,
+            targetScreenX: tScreenX,
+            targetScreenY: tScreenY,
+            targetIsInFront: tInFront,
+            leadScreenX: leadX,
+            leadScreenY: leadY,
+            showHitMarker: combat.hitMarkerTimer > 0.0,
+            totalKills: combat.totalKills,
+            playerShields: combat.playerShields,
+            playerHull: combat.playerHull,
+            weaponCapacitor: combat.weaponCapacitor,
+            sysPips: combat.distributor.sysPips,
+            engPips: combat.distributor.engPips,
+            wepPips: combat.distributor.wepPips,
             stationDistanceMetres: stationDist,
             earthAltitudeKm: earthAltKm,
             moonDistanceKm: moonDistKm,
             originRecenterCount: originFrame.recenterCount
         )
+    }
+
+    private static func clampToUnitCircle(x: Float, z: Float) -> (x: Float, z: Float) {
+        let len = sqrt(x * x + z * z)
+        if len > 1.0 {
+            return (x / len, z / len)
+        }
+        return (x, z)
     }
 }
 
@@ -299,7 +493,11 @@ struct SpaceSceneView: View {
     @StateObject private var metrics = DebugMetrics()
     @StateObject private var inputManager = ControllerInputManager()
     @StateObject private var sceneController = SceneController()
-    @State private var showSolSheet = false
+    @StateObject private var navManager = NavigationWaypointManager()
+
+    @State private var showHoloNavMap = false
+    @State private var showTuningDrawer = false
+    @State private var minimalHUDMode = false
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -311,6 +509,7 @@ struct SpaceSceneView: View {
                 let metricsRef = metrics
                 let inputRef = inputManager
                 let controllerRef = sceneController
+                let navRef = navManager
 
                 controllerRef.updateSubscription = content.subscribe(to: SceneEvents.Update.self) { event in
                     MainActor.assumeIsolated {
@@ -319,10 +518,11 @@ struct SpaceSceneView: View {
                         let latestHUD = controllerRef.stepFrame(
                             deltaTime: event.deltaTime,
                             input: currentInput,
-                            onToggleSolSheet: { toggledMap = true }
+                            navManager: navRef,
+                            onToggleNavMap: { toggledMap = true }
                         )
                         if toggledMap {
-                            showSolSheet.toggle()
+                            showHoloNavMap.toggle()
                         }
                         metricsRef.recordFrame(
                             deltaTime: event.deltaTime,
@@ -337,34 +537,69 @@ struct SpaceSceneView: View {
 
             FlightHUDView(
                 hud: metrics.hud,
+                minimalHUDMode: minimalHUDMode,
                 onToggleCamera: { sceneController.toggleCameraMode() },
                 onToggleFlightAssist: { inputManager.toggleFlightAssist() },
                 onTriggerBoost: { inputManager.requestBoost() },
-                onSetThrottle: { inputManager.setThrottle($0) }
+                onSetThrottle: { inputManager.setThrottle($0) },
+                onOpenNavMap: { showHoloNavMap = true },
+                onCycleWaypoint: { navManager.cycleNextLocalWaypoint() },
+                onMicroJump: { sceneController.engageLocalMicroJump(to: navManager.activeWaypoint) },
+                onCycleTarget: { sceneController.combat.cycleNextTarget() },
+                onCycleSubsystem: {
+                    sceneController.combat.selectedSubsystemIndex =
+                        (sceneController.combat.selectedSubsystemIndex + 1) % CombatDroneInstance.subsystems.count
+                },
+                onPipSYS: { sceneController.combat.distributor.allocateSYS() },
+                onPipENG: { sceneController.combat.distributor.allocateENG() },
+                onPipWEP: { sceneController.combat.distributor.allocateWEP() },
+                onPipReset: { sceneController.combat.distributor.reset() },
+                onOpenTuningDrawer: { showTuningDrawer.toggle() }
             )
 
             DebugOverlayView(
                 metrics: metrics,
                 inputManager: inputManager,
-                showSolSheet: $showSolSheet
+                showSolSheet: $showHoloNavMap
             )
-            .padding(.top, 18)
-            .padding(.leading, 20)
+            .padding(.top, 16)
+            .padding(.leading, 18)
+
+            if showTuningDrawer {
+                HStack {
+                    Spacer()
+                    FlightTuningDrawerView(
+                        spec: $sceneController.flight.spec,
+                        deadZone: $inputManager.deadZone,
+                        responseExponent: $inputManager.responseExponent,
+                        minimalHUDMode: $minimalHUDMode,
+                        onResetDefaults: {
+                            sceneController.flight.spec = ShipSpec.loadStarterSpec()
+                            inputManager.deadZone = 0.10
+                            inputManager.responseExponent = 1.80
+                            minimalHUDMode = false
+                        },
+                        onClose: { showTuningDrawer = false }
+                    )
+                    .padding(.top, 20)
+                    .padding(.trailing, 20)
+                }
+            }
+
+            if showHoloNavMap {
+                HoloNavigationMapView(
+                    navManager: navManager,
+                    playerWorldPosition: sceneController.playerWorldPos.position,
+                    isMassLocked: metrics.hud.isMassLocked,
+                    onEngageLocalJump: { wp in
+                        sceneController.engageLocalMicroJump(to: wp)
+                    },
+                    onClose: { showHoloNavMap = false }
+                )
+                .transition(.opacity)
+            }
         }
         .background(Color.black)
-        .sheet(isPresented: $showSolSheet) {
-            NavigationStack {
-                SolOverviewView()
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button("Close") {
-                                showSolSheet = false
-                            }
-                        }
-                    }
-            }
-            .preferredColorScheme(.dark)
-        }
     }
 
     private var freeLookDragGesture: some Gesture {

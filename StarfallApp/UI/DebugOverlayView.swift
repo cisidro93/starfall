@@ -11,7 +11,7 @@ final class DebugMetrics: ObservableObject {
     @Published var memoryText: String = "-- MB"
     @Published var thermalText: String = "Nominal"
     @Published var isWithinFrameBudget: Bool = true
-    @Published var isExpanded: Bool = true
+    @Published var isExpanded: Bool = false
     @Published var hud = FlightHUDTelemetry()
 
     private var smoothedDelta: Double = 1.0 / 60.0
@@ -149,7 +149,7 @@ struct DebugOverlayView: View {
                     Button {
                         showSolSheet = true
                     } label: {
-                        Text("Sol Data [Y]")
+                        Text("Nav Map [Y]")
                             .font(.system(size: 14, weight: .semibold, design: .monospaced))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)

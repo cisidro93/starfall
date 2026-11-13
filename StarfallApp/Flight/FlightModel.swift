@@ -138,17 +138,20 @@ enum FlightPhysics {
         flight: inout FlightComponent,
         input: InputStateComponent,
         worldPosition: inout WorldPositionComponent,
-        dt: Float
+        dt: Float,
+        engineSpeedMultiplier: Float = 1.0,
+        boostRechargeMultiplier: Float = 1.0
     ) {
         let spec = flight.spec
         let previousVelocity = flight.velocity
+        let scaledMaxSpeed = spec.maxSpeed * engineSpeedMultiplier
 
         // 1. Boost timers
         if flight.boostTimeRemaining > 0.0 {
             flight.boostTimeRemaining = max(0.0, flight.boostTimeRemaining - dt)
         }
         if flight.boostCooldownRemaining > 0.0 {
-            flight.boostCooldownRemaining = max(0.0, flight.boostCooldownRemaining - dt)
+            flight.boostCooldownRemaining = max(0.0, flight.boostCooldownRemaining - dt * boostRechargeMultiplier)
         }
         if input.boostTriggered && flight.canBoost {
             flight.boostTimeRemaining = spec.boostDuration
@@ -193,15 +196,15 @@ enum FlightPhysics {
 
         let effectiveMaxSpeed: Float = flight.isBoosting
             ? spec.boostSpeed
-            : (flight.speed > spec.maxSpeed ? max(spec.maxSpeed, flight.speed - 65.0 * dt) : spec.maxSpeed)
+            : (flight.speed > scaledMaxSpeed ? max(scaledMaxSpeed, flight.speed - 65.0 * dt) : scaledMaxSpeed)
 
         if input.flightAssistEnabled {
             // Flight Assist ON: compute desired velocity vector in ship frame and accelerate toward it.
             let forwardCommandSpeed = flight.isBoosting
                 ? spec.boostSpeed
-                : (input.throttle * spec.maxSpeed)
-            let lateralCommandSpeed = input.lateralThrust * (spec.maxSpeed * 0.65)
-            let verticalCommandSpeed = input.verticalThrust * (spec.maxSpeed * 0.65)
+                : (input.throttle * scaledMaxSpeed)
+            let lateralCommandSpeed = input.lateralThrust * (scaledMaxSpeed * 0.65)
+            let verticalCommandSpeed = input.verticalThrust * (scaledMaxSpeed * 0.65)
 
             let desiredVelocity = forward * forwardCommandSpeed
                 + right * lateralCommandSpeed
