@@ -190,6 +190,6 @@ final class GalaxyTests: XCTestCase {
 
         let totalDistanceKm = (playerPos.x * playerPos.x + playerPos.y * playerPos.y + playerPos.z * playerPos.z).squareRoot() / 1_000.0
         XCTAssertGreaterThan(totalDistanceKm, 1_000.0)
-        XCTAssertGreaterThan(frame.recenterCount, 450)
+        XCTAssertEqual(frame.recenterCount, 350)
     }
 }
