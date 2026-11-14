@@ -334,6 +334,14 @@ private struct CommodityRowView: View {
         return .secondary
     }
 
+    private var sellBgColor: Color {
+        inHold > 0 ? Color.green.opacity(0.26) : Color.white.opacity(0.06)
+    }
+
+    private var sellFgColor: Color {
+        inHold > 0 ? .green : .secondary
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
@@ -367,8 +375,8 @@ private struct CommodityRowView: View {
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(inHold > 0 ? Color.green.opacity(0.26) : Color.white.opacity(0.06))
-                    .foregroundStyle(inHold > 0 ? .green : .secondary)
+                    .background(sellBgColor)
+                    .foregroundStyle(sellFgColor)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             }
             .disabled(inHold == 0)
@@ -509,6 +517,14 @@ private struct OutfittingUpgradeRow: View {
         isMaxed ? "MAX CLASS A" : "UPGRADE (\(costCR) CR)"
     }
 
+    private var btnBgColor: Color {
+        isMaxed ? Color.white.opacity(0.08) : Color.orange.opacity(0.26)
+    }
+
+    private var btnFgColor: Color {
+        isMaxed ? .secondary : .orange
+    }
+
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
@@ -525,8 +541,8 @@ private struct OutfittingUpgradeRow: View {
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(isMaxed ? Color.white.opacity(0.08) : Color.orange.opacity(0.26))
-                    .foregroundStyle(isMaxed ? .secondary : .orange)
+                    .background(btnBgColor)
+                    .foregroundStyle(btnFgColor)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             }
             .disabled(isMaxed)
