@@ -145,7 +145,7 @@ enum SolSceneBuilder {
         let lightColor: UIColor
 
         switch star.stellarClass {
-        case .O, .B, .A, .whiteDwarf, .neutron:
+        case .O, .B, .A:
             // Brilliant Blue-White Star (e.g., Sirius)
             coreColor = UIColor(red: 0.85, green: 0.94, blue: 1.00, alpha: 1.0)
             innerColor = UIColor(red: 0.38, green: 0.78, blue: 1.00, alpha: 1.0)
@@ -163,7 +163,7 @@ enum SolSceneBuilder {
             innerColor = UIColor(red: 1.00, green: 0.52, blue: 0.18, alpha: 1.0)
             outerColor = UIColor(red: 0.90, green: 0.30, blue: 0.10, alpha: 1.0)
             lightColor = UIColor(red: 1.00, green: 0.82, blue: 0.62, alpha: 1.0)
-        case .M:
+        default:
             // Deep Crimson Red Dwarf (e.g., Barnard's Star, Proxima, Wolf 359)
             coreColor = UIColor(red: 1.00, green: 0.46, blue: 0.32, alpha: 1.0)
             innerColor = UIColor(red: 0.98, green: 0.24, blue: 0.16, alpha: 1.0)

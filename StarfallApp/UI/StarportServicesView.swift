@@ -6,6 +6,7 @@ enum StarportServiceTab: String, CaseIterable, Identifiable {
     case missions = "MISSION BOARD"
     case shipyard = "SHIPYARD"
     case outfitting = "OUTFITTING"
+    case codex = "CODEX & LORE"
 
     var id: String { rawValue }
 }
@@ -303,6 +304,8 @@ private struct StarportRightMainPane: View {
                 ShipyardCatalogPane(commander: commander, onShipChanged: onShipChanged)
             case .outfitting:
                 OutfittingWorkshopPane(commander: commander)
+            case .codex:
+                CodexAndHandbookPane()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -669,6 +672,87 @@ private struct OutfittingUpgradeRow: View {
             }
             .disabled(isMaxed)
         }
+        .padding(12)
+        .background(Color.white.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct CodexEntryItem: Identifiable {
+    let id: String
+    let category: String
+    let title: String
+    let bodyText: String
+}
+
+private struct CodexAndHandbookPane: View {
+    private static let entries: [CodexEntryItem] = [
+        CodexEntryItem(
+            id: "guide_flight",
+            category: "PILOT'S HANDBOOK • FLIGHT & DOGFIGHTING",
+            title: "BLUE-ZONE AGILITY & POWER DISTRIBUTOR PIPS (SYS / ENG / WEP)",
+            bodyText: "Keep your throttle inside the glowing cyan Blue Zone (40%–65%) during dogfights for a +35% pitch and yaw turn-rate boost. Use D-Pad (or touch SYS/ENG/WEP buttons) to route reactor power: 4 Pips to SYS cuts incoming shield damage by 52% and speeds shield regen; 4 Pips to ENG maximizes cruise speed and boost recharge; 4 Pips to WEP keeps your Pulse Lasers and Multi-Cannons firing continuously."
+        ),
+        CodexEntryItem(
+            id: "guide_overview",
+            category: "PILOT'S HANDBOOK • EVE TACTICAL OVERVIEW",
+            title: "USING THE COLLAPSIBLE RIGHT-HAND TACTICAL OVERVIEW",
+            bodyText: "Tap any contact in the top-right EVE Overview list (Pirates, Mineable Asteroids, Ore Canisters, Stations, or Signal Sources) and tap APPROACH or ORBIT 500M to engage hands-free flight assist. Touching the flight stick at any time immediately returns you to manual control."
+        ),
+        CodexEntryItem(
+            id: "guide_mining",
+            category: "PILOT'S HANDBOOK • ASTEROID MINING & SALVAGE",
+            title: "THERMAL LASER MINING & MAGNETIC TRACTOR SCOOP",
+            bodyText: "Supercruise to Asteroid Belt Alpha or a Crystalline Anomaly and fire your Pulse Lasers at mineral-rich asteroids (Titanium, Core Crystal, or Void Opals). At 50% and 0% rock integrity, glowing 3D Ore Canisters fracture into space. Fly within 130m–260m (or tap TRACTOR on the Overview) to beam canisters into your hold."
+        ),
+        CodexEntryItem(
+            id: "lore_sol",
+            category: "GALNET ARCHIVE • 3312 HUMAN BUBBLE",
+            title: "THE SOL CORRIDOR & GAGARIN GATEWAY",
+            bodyText: "Following the activation of the first Frame Shift Witch-Space conduits, humanity expanded across the 20-light-year Solar Neighbourhood. Gagarin Gateway in high Earth orbit serves as the primary High-Tech logistics ring for independent Commanders licensed by the Pilots' Guild."
+        ),
+        CodexEntryItem(
+            id: "lore_forsaken",
+            category: "GALNET ARCHIVE • FRONTIER MYSTERIES",
+            title: "THE FORSAKEN RELAY INCIDENT & ROGUE DRONE SWARMS",
+            bodyText: "Deep-space telemetry relays across Barnard's Star, Wolf 359, and Sol have gone dark following raids by autonomous 'Vortex' aggressor wings. Salvage crews recovering Ancient Salvage Cores from shattered relay hulks report encrypted navigational beacons pointing toward uncharted sectors."
+        )
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("COMMANDER'S CODEX, PILOT'S HANDBOOK & GALNET ARCHIVES")
+                .font(.system(size: 15, weight: .bold, design: .monospaced))
+                .foregroundStyle(.orange)
+
+            ScrollView {
+                VStack(spacing: 10) {
+                    ForEach(Self.entries) { entry in
+                        CodexEntryCardView(entry: entry)
+                    }
+                }
+            }
+        }
+        .padding(14)
+    }
+}
+
+private struct CodexEntryCardView: View {
+    let entry: CodexEntryItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(entry.category)
+                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                .foregroundStyle(.cyan)
+            Text(entry.title)
+                .font(.system(size: 15, weight: .heavy, design: .monospaced))
+                .foregroundStyle(.orange)
+            Text(entry.bodyText)
+                .font(.system(size: 14, weight: .regular, design: .monospaced))
+                .foregroundStyle(.white)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(Color.white.opacity(0.05))
         .clipShape(RoundedRectangle(cornerRadius: 8))

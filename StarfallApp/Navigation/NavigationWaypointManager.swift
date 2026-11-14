@@ -131,7 +131,7 @@ final class NavigationWaypointManager: ObservableObject {
         case .low:
             let val = 0.2 + jitter * 0.5
             return String(format: "%.1f LOW-SEC", val)
-        case .lawless:
+        default:
             return "0.1 NULL-SEC"
         }
     }
