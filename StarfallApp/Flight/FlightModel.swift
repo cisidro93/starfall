@@ -159,10 +159,14 @@ enum FlightPhysics {
             flight.boostCooldownRemaining = spec.boostCooldown
         }
 
-        // 2. Rotational 6DOF physics + Precision Target Magnetism & Auto-Track
-        let maxPitchRad = spec.pitchRateDeg * .pi / 180.0
+        // 2. Rotational 6DOF physics + Elite "Blue Zone" (40%..65% throttle) Agility Boost + Target Auto-Track
+        let distFromBlueCenter = abs(input.throttle - 0.525)
+        let blueZoneBonus = max(0.0, 1.0 - distFromBlueCenter / 0.25)
+        let blueZoneAgility: Float = 0.86 + 0.48 * blueZoneBonus
+
+        let maxPitchRad = (spec.pitchRateDeg * blueZoneAgility) * .pi / 180.0
         let maxRollRad = spec.rollRateDeg * .pi / 180.0
-        let maxYawRad = spec.yawRateDeg * .pi / 180.0
+        let maxYawRad = (spec.yawRateDeg * blueZoneAgility) * .pi / 180.0
 
         var aimDamping: Float = 1.0
         var assistPitchRad: Float = 0.0

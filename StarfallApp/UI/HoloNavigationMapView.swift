@@ -824,12 +824,22 @@ private struct WaypointInspectorCard: View {
         isLocked ? .cyan : .orange
     }
 
+    private var isInterstellar: Bool {
+        waypoint.targetSystem != nil
+    }
+
+    private var canShowJumpButton: Bool {
+        waypoint.supportsLocalJump || isInterstellar
+    }
+
     private var jumpBtnTitle: String {
-        isMassLocked ? "MASS LOCKED" : "MICRO-JUMP"
+        if isInterstellar { return "HYPERSPACE JUMP" }
+        return isMassLocked ? "MASS LOCKED" : "SUPERCRUISE"
     }
 
     private var jumpBtnColor: Color {
-        isMassLocked ? .red : .green
+        if isInterstellar { return .cyan }
+        return isMassLocked ? .red : .green
     }
 
     var body: some View {
@@ -875,7 +885,7 @@ private struct WaypointInspectorCard: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
 
-                if waypoint.supportsLocalJump {
+                if canShowJumpButton {
                     Button(action: onJumpNow) {
                         Text(jumpBtnTitle)
                             .font(.system(size: 14, weight: .bold, design: .monospaced))
@@ -889,7 +899,7 @@ private struct WaypointInspectorCard: View {
                             )
                             .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
-                    .disabled(isMassLocked)
+                    .disabled(isMassLocked && !isInterstellar)
                 }
             }
         }

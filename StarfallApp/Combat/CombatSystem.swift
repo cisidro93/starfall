@@ -139,6 +139,7 @@ final class CombatSystemManager {
     var cannonCooldown: Float = 0.0
     var hitMarkerTimer: Float = 0.0
     var totalKills: Int = 0
+    var onDroneKilled: ((String) -> Void)?
 
     // Visual tracer entities attached to root
     private var leftLaserBeam: ModelEntity?
@@ -354,6 +355,7 @@ final class CombatSystemManager {
                 totalKills += 1
                 heavyImpact.impactOccurred()
                 notifyHaptic.notificationOccurred(.success)
+                onDroneKilled?(drone.callsign)
             }
         }
     }

@@ -4,10 +4,17 @@ import simd
 @MainActor
 struct FlightHUDTelemetry {
     var shipName: String = "SF-1V Kestrel"
+    var currentSystemName: String = "Sol"
+    var currentSystemSecurity: String = "High"
+    var credits: Int = 25_000
+    var unclaimedBountiesCR: Int = 0
+    var statusBannerText: String = "SYSTEMS ONLINE"
+
     var speedMetresPerSec: Float = 0.0
     var maxSpeed: Float = 260.0
     var boostSpeed: Float = 440.0
-    var throttle: Float = 0.35
+    var throttle: Float = 0.48
+    var isInBlueZone: Bool = true
     var isBoosting: Bool = false
     var boostChargeFraction: Float = 1.0
     var flightAssistEnabled: Bool = true
@@ -15,6 +22,13 @@ struct FlightHUDTelemetry {
     var hardpointsDeployed: Bool = false
     var landingGearDeployed: Bool = false
     var cameraMode: ShipCameraMode = .cockpit
+
+    // FSD & Docking state
+    var isFSDCharging: Bool = false
+    var fsdCountdownText: String = ""
+    var isHyperspaceJumping: Bool = false
+    var hyperspaceDestinationName: String = ""
+    var canDockAtStation: Bool = false
 
     // Prograde drift indicator
     var progradeOffsetX: CGFloat = 0.0
@@ -27,6 +41,7 @@ struct FlightHUDTelemetry {
     var waypointDistanceText: String = "900 m"
     var waypointETAText: String = "0:04"
     var waypointSupportsLocalJump: Bool = true
+    var waypointIsInterstellar: Bool = false
     var waypointScreenX: CGFloat = 0.0
     var waypointScreenY: CGFloat = 0.0
     var waypointIsOnScreen: Bool = true
@@ -81,7 +96,8 @@ struct FlightHUDView: View {
     let onSetThrottle: (Float) -> Void
     let onOpenNavMap: () -> Void
     let onCycleWaypoint: () -> Void
-    let onMicroJump: () -> Void
+    let onEngageFSD: () -> Void
+    let onDockAtStation: () -> Void
     let onCycleTarget: () -> Void
     let onCycleSubsystem: () -> Void
     let onPipSYS: () -> Void
@@ -95,15 +111,25 @@ struct FlightHUDView: View {
             CenterSpatialHUDOverlay(hud: hud)
                 .allowsHitTesting(false)
 
+            if hud.isHyperspaceJumping {
+                HyperspaceWitchSpaceOverlay(destinationName: hud.hyperspaceDestinationName)
+                    .allowsHitTesting(false)
+            }
+
             VStack {
+                TopCommanderStatusBanner(hud: hud)
+                    .padding(.top, 14)
+
                 Spacer()
+
                 HStack(alignment: .bottom, spacing: 14) {
                     if !minimalHUDMode {
                         LeftNavAndTargetHoloPanel(
                             hud: hud,
                             onOpenNavMap: onOpenNavMap,
                             onCycleWaypoint: onCycleWaypoint,
-                            onMicroJump: onMicroJump,
+                            onEngageFSD: onEngageFSD,
+                            onDockAtStation: onDockAtStation,
                             onCycleTarget: onCycleTarget,
                             onToggleAutoTrack: onToggleAutoTrack,
                             onCycleSubsystem: onCycleSubsystem
@@ -141,6 +167,85 @@ struct FlightHUDView: View {
     }
 }
 
+// MARK: - Top Commander & FSD Alert Banner
+
+private struct TopCommanderStatusBanner: View {
+    let hud: FlightHUDTelemetry
+
+    private var sysHeader: String {
+        "\(hud.currentSystemName.uppercased()) SYSTEM (\(hud.currentSystemSecurity.uppercased())) • \(hud.credits) CR"
+    }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Text(sysHeader)
+                .font(.system(size: 14, weight: .heavy, design: .monospaced))
+                .foregroundStyle(.orange)
+
+            if hud.isFSDCharging {
+                Text(hud.fsdCountdownText)
+                    .font(.system(size: 18, weight: .heavy, design: .monospaced))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 4)
+                    .background(Color.cyan.opacity(0.28))
+                    .foregroundStyle(.cyan)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            } else {
+                Text(hud.statusBannerText)
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.cyan)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 7)
+        .background(Color.black.opacity(0.68))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.orange.opacity(0.45), lineWidth: 1.2)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct HyperspaceWitchSpaceOverlay: View {
+    let destinationName: String
+
+    private var jumpTitle: String {
+        "WITCH-SPACE HYPERSPACE CONDUIT → \(destinationName.uppercased())"
+    }
+
+    var body: some View {
+        ZStack {
+            Color(red: 0.02, green: 0.08, blue: 0.18).opacity(0.82)
+                .ignoresSafeArea()
+
+            Circle()
+                .stroke(Color.cyan.opacity(0.65), lineWidth: 4)
+                .frame(width: 220, height: 220)
+
+            Circle()
+                .stroke(Color.orange.opacity(0.55), lineWidth: 2.5)
+                .frame(width: 420, height: 420)
+
+            Circle()
+                .stroke(Color.cyan.opacity(0.35), lineWidth: 2)
+                .frame(width: 680, height: 680)
+
+            VStack(spacing: 8) {
+                Text("FRAME SHIFT DRIVE ACTIVE")
+                    .font(.system(size: 24, weight: .heavy, design: .monospaced))
+                    .foregroundStyle(.cyan)
+                Text(jumpTitle)
+                    .font(.system(size: 16, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.orange)
+            }
+            .padding(18)
+            .background(Color.black.opacity(0.80))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+    }
+}
+
 // MARK: - Center Spatial Reticles
 
 private struct CenterSpatialHUDOverlay: View {
@@ -173,7 +278,6 @@ private struct BoresightReticleRing: View {
 
     var body: some View {
         ZStack {
-            // Subtle 20° Gimbal Auto-Tracking Cone Ring
             Circle()
                 .stroke(Color.orange.opacity(0.18), style: StrokeStyle(lineWidth: 1.0, dash: [6, 6]))
                 .frame(width: 210, height: 210)
@@ -354,11 +458,15 @@ private struct CenterSensorDiscConsole: View {
     let onOpenNavMap: () -> Void
 
     private var massLockText: String {
-        hud.isMassLocked ? "MASS LOCK" : "JUMP RDY"
+        hud.isMassLocked ? "MASS LOCK" : "FSD RDY"
     }
 
     private var massLockColor: Color {
         hud.isMassLocked ? .red : .cyan
+    }
+
+    private var bountyBadgeText: String {
+        hud.unclaimedBountiesCR > 0 ? "+\(hud.unclaimedBountiesCR / 1000)K CR" : "KILLS: \(hud.totalKills)"
     }
 
     var body: some View {
@@ -385,17 +493,17 @@ private struct CenterSensorDiscConsole: View {
                     .foregroundStyle(massLockColor)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
 
-                Text("KILLS: \(hud.totalKills)")
+                Text(bountyBadgeText)
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .foregroundStyle(.orange)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(Color.black.opacity(0.70))
+        .background(Color.black.opacity(0.74))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.orange.opacity(0.55), lineWidth: 1.4)
+                .stroke(Color.orange.opacity(0.60), lineWidth: 1.4)
         )
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
@@ -526,13 +634,14 @@ private struct SensorContactStalkView: View {
     }
 }
 
-// MARK: - Left Cockpit Panel
+// MARK: - Left Cockpit Panel ([1] EXT PANEL)
 
 private struct LeftNavAndTargetHoloPanel: View {
     let hud: FlightHUDTelemetry
     let onOpenNavMap: () -> Void
     let onCycleWaypoint: () -> Void
-    let onMicroJump: () -> Void
+    let onEngageFSD: () -> Void
+    let onDockAtStation: () -> Void
     let onCycleTarget: () -> Void
     let onToggleAutoTrack: () -> Void
     let onCycleSubsystem: () -> Void
@@ -541,16 +650,20 @@ private struct LeftNavAndTargetHoloPanel: View {
         "\(hud.waypointDistanceText) • ETA \(hud.waypointETAText)"
     }
 
-    private var jumpBtnTitle: String {
-        hud.isMassLocked ? "MASS LOCKED" : "MICRO-JUMP"
+    private var fsdBtnTitle: String {
+        if hud.waypointIsInterstellar {
+            return "HYPERSPACE JUMP"
+        }
+        return hud.isMassLocked ? "MASS LOCKED" : "SUPERCRUISE"
     }
 
-    private var jumpBtnColor: Color {
-        hud.isMassLocked ? .red : .cyan
+    private var fsdBtnColor: Color {
+        if hud.waypointIsInterstellar { return .cyan }
+        return hud.isMassLocked ? .red : .cyan
     }
 
     private var targetHeaderTitle: String {
-        hud.hasLockedTarget ? "TARGET: \(hud.targetName)" : "NO COMBAT TARGET"
+        hud.hasLockedTarget ? "WANTED: \(hud.targetName)" : "NO COMBAT TARGET"
     }
 
     private var targetHeaderColor: Color {
@@ -576,13 +689,13 @@ private struct LeftNavAndTargetHoloPanel: View {
                     Text(hud.waypointKind.iconName)
                         .font(.system(size: 15, weight: .heavy, design: .monospaced))
                         .foregroundStyle(.cyan)
-                    Text("WAYPOINT LOCK")
+                    Text("[1] NAV & CONTACTS")
                         .font(.system(size: 14, weight: .bold, design: .monospaced))
                         .foregroundStyle(.orange)
                 }
                 Spacer()
                 Button(action: onOpenNavMap) {
-                    Text("NAV MAP [Y]")
+                    Text("GALAXY MAP [Y]")
                         .font(.system(size: 14, weight: .bold, design: .monospaced))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -614,17 +727,29 @@ private struct LeftNavAndTargetHoloPanel: View {
                         .clipShape(RoundedRectangle(cornerRadius: 5))
                 }
 
-                if hud.waypointSupportsLocalJump {
-                    Button(action: onMicroJump) {
-                        Text(jumpBtnTitle)
+                if hud.waypointSupportsLocalJump || hud.waypointIsInterstellar {
+                    Button(action: onEngageFSD) {
+                        Text(fsdBtnTitle)
                             .font(.system(size: 14, weight: .bold, design: .monospaced))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 5)
-                            .background(jumpBtnColor.opacity(0.24))
-                            .foregroundStyle(jumpBtnColor)
+                            .background(fsdBtnColor.opacity(0.24))
+                            .foregroundStyle(fsdBtnColor)
                             .clipShape(RoundedRectangle(cornerRadius: 5))
                     }
-                    .disabled(hud.isMassLocked)
+                    .disabled(hud.isMassLocked && !hud.waypointIsInterstellar)
+                }
+
+                if hud.canDockAtStation {
+                    Button(action: onDockAtStation) {
+                        Text("DOCK PAD 04")
+                            .font(.system(size: 14, weight: .heavy, design: .monospaced))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Color.green.opacity(0.28))
+                            .foregroundStyle(.green)
+                            .clipShape(RoundedRectangle(cornerRadius: 5))
+                    }
                 }
             }
 
@@ -671,18 +796,18 @@ private struct LeftNavAndTargetHoloPanel: View {
                 }
             }
         }
-        .frame(width: 330, alignment: .leading)
+        .frame(width: 345, alignment: .leading)
         .padding(12)
-        .background(Color.black.opacity(0.70))
+        .background(Color.black.opacity(0.74))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.orange.opacity(0.50), lineWidth: 1.3)
+                .stroke(Color.orange.opacity(0.55), lineWidth: 1.3)
         )
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
-// MARK: - Right Cockpit Panel
+// MARK: - Right Cockpit Panel ([4] INT PANEL)
 
 private struct RightFlightAndPipsHoloPanel: View {
     let hud: FlightHUDTelemetry
@@ -708,8 +833,12 @@ private struct RightFlightAndPipsHoloPanel: View {
         "SHD \(Int(hud.playerShields))% • HULL \(Int(hud.playerHull))%"
     }
 
-    private var wepCapText: String {
-        "WEP CAP \(Int(hud.weaponCapacitor))%"
+    private var agilityZoneText: String {
+        hud.isInBlueZone ? "BLUE ZONE (MAX AGILITY)" : "WEP CAP \(Int(hud.weaponCapacitor))%"
+    }
+
+    private var agilityZoneColor: Color {
+        hud.isInBlueZone ? .cyan : .orange
     }
 
     private var boostBtnTitle: String {
@@ -735,9 +864,9 @@ private struct RightFlightAndPipsHoloPanel: View {
                     Text(playerHealthText)
                         .font(.system(size: 14, weight: .bold, design: .monospaced))
                         .foregroundStyle(.cyan)
-                    Text(wepCapText)
+                    Text(agilityZoneText)
                         .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(agilityZoneColor)
                 }
 
                 Spacer()
@@ -770,7 +899,7 @@ private struct RightFlightAndPipsHoloPanel: View {
 
             HStack(spacing: 6) {
                 ThrottlePresetButton(title: "0%", action: { onSetThrottle(0.0) })
-                ThrottlePresetButton(title: "50%", action: { onSetThrottle(0.5) })
+                ThrottlePresetButton(title: "BLUE 50%", action: { onSetThrottle(0.52) })
                 ThrottlePresetButton(title: "100%", action: { onSetThrottle(1.0) })
 
                 Spacer()
@@ -818,12 +947,12 @@ private struct RightFlightAndPipsHoloPanel: View {
                 }
             }
         }
-        .frame(width: 335, alignment: .trailing)
+        .frame(width: 345, alignment: .trailing)
         .padding(12)
-        .background(Color.black.opacity(0.70))
+        .background(Color.black.opacity(0.74))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.orange.opacity(0.50), lineWidth: 1.3)
+                .stroke(Color.orange.opacity(0.55), lineWidth: 1.3)
         )
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
@@ -913,10 +1042,19 @@ private struct SpeedThrottleBar: View {
             let w = geo.size.width
             let speedW = max(0, min(w, w * CGFloat(speedFraction)))
             let thrX = max(0, min(w - 3, w * CGFloat(throttleFraction)))
+            // Elite "Blue Zone" sweet spot band (40%..65% of cruise speed)
+            let blueStart = w * 0.24
+            let blueWidth = w * 0.16
 
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Color.white.opacity(0.12))
+
+                // Blue Sweet-Spot Zone marker on throttle bar
+                Rectangle()
+                    .fill(Color.cyan.opacity(0.32))
+                    .frame(width: blueWidth, height: 11)
+                    .offset(x: blueStart)
 
                 RoundedRectangle(cornerRadius: 4)
                     .fill(barFillColor)

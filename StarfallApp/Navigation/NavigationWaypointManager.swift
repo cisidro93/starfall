@@ -43,15 +43,11 @@ struct NavigationWaypoint: Identifiable, Hashable, Sendable {
     let subtitle: String
     let detailText: String
     let kind: WaypointKind
-    /// Position in local Sol world frame (metres from player spawn origin).
     let worldPosition: SIMD3<Double>
     let radiusMetres: Double
-    /// Sector grid coordinate (0...15, 0...15) for the Vendetta-style local sector grid.
     let sectorGridX: Int
     let sectorGridY: Int
-    /// Optional target star system if this waypoint is an interstellar jump target.
     let targetSystem: SystemSummary?
-    /// Whether the player can perform an in-system micro-jump directly to this local coordinate.
     let supportsLocalJump: Bool
 
     static func == (lhs: NavigationWaypoint, rhs: NavigationWaypoint) -> Bool {
@@ -63,11 +59,9 @@ struct NavigationWaypoint: Identifiable, Hashable, Sendable {
     }
 }
 
-/// A 3D contact displayed on the Elite-style bottom-center holographic sensor disc.
 struct SensorDiscContact: Identifiable, Sendable {
     let id: String
     let label: String
-    /// Normalized position in ship-local radar space (-1...1 on X/Z disc plane, -1...1 on Y elevation stalk).
     let discX: Float
     let discZ: Float
     let elevationY: Float
@@ -79,6 +73,7 @@ struct SensorDiscContact: Identifiable, Sendable {
 
 @MainActor
 final class NavigationWaypointManager: ObservableObject {
+    @Published private(set) var currentSystem: StarSystem
     @Published private(set) var localWaypoints: [NavigationWaypoint] = []
     @Published private(set) var systemBodyWaypoints: [NavigationWaypoint] = []
     @Published private(set) var nearbyStarWaypoints: [NavigationWaypoint] = []
@@ -87,33 +82,67 @@ final class NavigationWaypointManager: ObservableObject {
     @Published var jumpRangeLY: Double = 12.0
 
     let galaxy = Galaxy()
-    let solSystem: StarSystem
 
     init() {
         let g = Galaxy()
         let sol = g.system(g.sol.id)!
-        self.solSystem = sol
+        self.currentSystem = sol
+        let dummyWP = NavigationWaypoint(
+            id: "wp_init",
+            name: "Gagarin Gateway",
+            subtitle: "Ring Station",
+            detailText: "",
+            kind: .station,
+            worldPosition: SIMD3<Double>(0, 0, -900),
+            radiusMetres: 165,
+            sectorGridX: 8,
+            sectorGridY: 5,
+            targetSystem: nil,
+            supportsLocalJump: true
+        )
+        self.activeWaypoint = dummyWP
+        loadSystem(systemID: sol.id)
+    }
 
-        let earthBody = sol.bodies.first { $0.name == "Earth" }!
-        let moonBody = earthBody.moons.first { $0.name == "Moon" }!
-        let earthRadiusM = earthBody.radiusKm * 1_000.0
-        let earthDir = simd_normalize(SIMD3<Double>(-0.48, -0.16, -0.86))
-        let earthWorldPos = earthDir * (earthRadiusM + 9_100_000.0)
+    var primaryStationName: String {
+        currentSystem.settlement?.stations.first?.name ?? "\(currentSystem.name) Orbital"
+    }
+
+    var primaryEconomy: Economy {
+        currentSystem.settlement?.economy ?? .colony
+    }
+
+    var primarySecurityText: String {
+        currentSystem.settlement?.security.rawValue ?? "Uninhabited"
+    }
+
+    func loadSystem(systemID: SystemID) {
+        let sys = galaxy.system(systemID) ?? galaxy.system(galaxy.sol.id)!
+        self.currentSystem = sys
+
+        let primaryStar = sys.stars.first!
+        let primaryPlanet = sys.bodies.first(where: { $0.name == "Earth" }) ?? sys.bodies.first
+        let primaryRadiusM = (primaryPlanet?.radiusKm ?? 6_371.0) * 1_000.0
+        let planetDir = simd_normalize(SIMD3<Double>(-0.48, -0.16, -0.86))
+        let planetWorldPos = planetDir * (primaryRadiusM + 9_100_000.0)
         let moonDir = simd_normalize(SIMD3<Double>(0.52, 0.22, -0.82))
-        let moonWorldPos = earthWorldPos + moonDir * (moonBody.semiMajorAxisKm * 1_000.0)
+        let moonWorldPos = planetWorldPos + moonDir * 384_400_000.0
         let sunDir = simd_normalize(SIMD3<Double>(0.74, 0.32, -0.59))
-        let sunWorldPos = sunDir * (earthBody.semiMajorAxisKm * 1_000.0)
+        let sunWorldPos = sunDir * 149_597_870_700.0
+
+        let stnName = sys.settlement?.stations.first?.name ?? "\(sys.name) Gateway"
+        let anchorName = primaryPlanet?.name ?? sys.name
 
         let gagarinPos = SIMD3<Double>(0.0, 0.0, -900.0)
         let patrolAlphaPos = SIMD3<Double>(-220.0, 45.0, -480.0)
         let derelictPos = SIMD3<Double>(480.0, -75.0, -560.0)
         let navBeaconPos = SIMD3<Double>(140.0, 110.0, -320.0)
 
-        let gagarinWP = NavigationWaypoint(
-            id: "wp_gagarin_gateway",
-            name: "Gagarin Gateway",
-            subtitle: "Ring Station • Orbiting Earth",
-            detailText: "Primary orbital habitat & docking hub in high Earth orbit. Clear 450m mass-lock perimeter before engaging jump drive.",
+        let stnWP = NavigationWaypoint(
+            id: "wp_primary_station",
+            name: stnName,
+            subtitle: "Ring Station • Orbiting \(anchorName)",
+            detailText: "Primary orbital Coriolis/Ring port in \(sys.name). Request docking clearance within 7.5 km to land on Pad 04 and access Starport Services.",
             kind: .station,
             worldPosition: gagarinPos,
             radiusMetres: 165.0,
@@ -125,9 +154,9 @@ final class NavigationWaypointManager: ObservableObject {
 
         let patrolWP = NavigationWaypoint(
             id: "wp_patrol_alpha",
-            name: "Patrol Sector Alpha",
-            subtitle: "Combat Zone • 3 Hostile Drones",
-            detailText: "Active weapons-testing perimeter patrolled by 3 autonomous SF-D aggressor drones.",
+            name: "Resource Extraction / Patrol Zone",
+            subtitle: "Combat Zone • Wanted Pirate Drones (+12,500 CR)",
+            detailText: "Active pirate interception zone. Destroy wanted aggressor drones to earn 12,500 CR bounty vouchers redeemable at \(stnName).",
             kind: .combatZone,
             worldPosition: patrolAlphaPos,
             radiusMetres: 120.0,
@@ -141,7 +170,7 @@ final class NavigationWaypointManager: ObservableObject {
             id: "wp_derelict_hulk",
             name: "Forsaken Relay Hulk",
             subtitle: "Salvage Wreckage • High-Orbit Debris",
-            detailText: "Shattered deep-space relay superstructure surrounded by floating hull plating. Ideal for 6DOF Flight Assist OFF weaving.",
+            detailText: "Shattered deep-space relay superstructure surrounded by floating hull plating.",
             kind: .beacon,
             worldPosition: derelictPos,
             radiusMetres: 60.0,
@@ -152,10 +181,10 @@ final class NavigationWaypointManager: ObservableObject {
         )
 
         let navBeaconWP = NavigationWaypoint(
-            id: "wp_sol_nav_beacon",
-            name: "Earth Orbital Nav Beacon",
-            subtitle: "Telemetry Transponder • Sector E8",
-            detailText: "High-gain system navigation transponder broadcasting Sol orbital ephemeris and docking approach corridors.",
+            id: "wp_nav_beacon",
+            name: "\(sys.name) Nav Beacon",
+            subtitle: "System Telemetry Transponder • Sector E8",
+            detailText: "High-gain system navigation transponder broadcasting \(sys.name) orbital ephemeris and trade lane data.",
             kind: .beacon,
             worldPosition: navBeaconPos,
             radiusMetres: 15.0,
@@ -165,37 +194,35 @@ final class NavigationWaypointManager: ObservableObject {
             supportsLocalJump: true
         )
 
-        self.localWaypoints = [gagarinWP, patrolWP, derelictWP, navBeaconWP]
-        self.activeWaypoint = gagarinWP
+        self.localWaypoints = [stnWP, patrolWP, derelictWP, navBeaconWP]
+        self.activeWaypoint = stnWP
 
-        // Build Sol System Bodies & Stations
+        // Build System Bodies & Stations
         var sysWPs: [NavigationWaypoint] = []
-        if let star = sol.stars.first {
-            sysWPs.append(
-                NavigationWaypoint(
-                    id: "wp_star_sol",
-                    name: "Sol (\(star.spectralType))",
-                    subtitle: "G-Type Main Sequence Star • 1.000 AU",
-                    detailText: String(format: "Surface Temp: %.0f K • Mass: %.2f M☉ • Luminosity: %.2f L☉", star.temperatureK, star.massSolar, star.luminositySolar),
-                    kind: .star,
-                    worldPosition: sunWorldPos,
-                    radiusMetres: star.radiusSolar * 696_340_000.0,
-                    sectorGridX: 14,
-                    sectorGridY: 2,
-                    targetSystem: nil,
-                    supportsLocalJump: false
-                )
+        sysWPs.append(
+            NavigationWaypoint(
+                id: "wp_star_primary",
+                name: "\(primaryStar.name) (\(primaryStar.spectralType))",
+                subtitle: "\(primaryStar.stellarClass.displayName) • Primary Star",
+                detailText: String(format: "Surface Temp: %.0f K • Mass: %.2f M☉ • Luminosity: %.2f L☉", primaryStar.temperatureK, primaryStar.massSolar, primaryStar.luminositySolar),
+                kind: .star,
+                worldPosition: sunWorldPos,
+                radiusMetres: max(0.15, primaryStar.radiusSolar) * 696_340_000.0,
+                sectorGridX: 14,
+                sectorGridY: 2,
+                targetSystem: nil,
+                supportsLocalJump: false
             )
-        }
+        )
 
-        let stations = sol.settlement?.stations ?? []
-        for (idx, body) in sol.bodies.enumerated() {
+        let stations = sys.settlement?.stations ?? []
+        for (idx, body) in sys.bodies.enumerated() {
             let bodyPos: SIMD3<Double>
-            if body.name == "Earth" {
-                bodyPos = earthWorldPos
+            if idx == 0 || body.name == "Earth" {
+                bodyPos = planetWorldPos
             } else {
                 let angle = Double(idx) * 1.15 + 0.4
-                let distM = body.semiMajorAxisAU * 149_597_870_700.0
+                let distM = max(0.2, body.semiMajorAxisAU) * 149_597_870_700.0
                 let dir = simd_normalize(SIMD3<Double>(cos(angle), sin(angle * 0.5) * 0.15, -sin(angle)))
                 bodyPos = sunWorldPos + dir * distM
             }
@@ -208,70 +235,75 @@ final class NavigationWaypointManager: ObservableObject {
 
             sysWPs.append(
                 NavigationWaypoint(
-                    id: "wp_body_\(body.name.lowercased())",
+                    id: "wp_body_\(idx)_\(body.name.lowercased())",
                     name: body.name,
                     subtitle: "\(body.kind.rawValue) • \(auStr)\(stnNote)",
                     detailText: "Radius: \(Int(body.radiusKm)) km • Gravity: \(gravStr) • Temp: \(tempStr) • \(body.landing.rawValue)",
                     kind: .planet,
                     worldPosition: bodyPos,
-                    radiusMetres: body.radiusKm * 1_000.0,
+                    radiusMetres: max(500.0, body.radiusKm) * 1_000.0,
                     sectorGridX: min(15, max(0, 2 + idx * 2)),
-                    sectorGridY: body.name == "Earth" ? 3 : 1,
+                    sectorGridY: idx == 0 ? 3 : 1,
                     targetSystem: nil,
-                    supportsLocalJump: false
+                    supportsLocalJump: true
                 )
             )
 
-            if body.name == "Earth" {
+            if let firstMoon = body.moons.first {
                 sysWPs.append(
                     NavigationWaypoint(
-                        id: "wp_moon_luna",
-                        name: "Moon (Luna)",
-                        subtitle: "Rocky Moon • Orbiting Earth • 384,400 km",
-                        detailText: "Radius: 1,737 km • Gravity: 0.17 g • Surface Port: Armstrong Landing",
+                        id: "wp_moon_\(idx)_\(firstMoon.name.lowercased())",
+                        name: firstMoon.name,
+                        subtitle: "\(firstMoon.kind.rawValue) Moon • Orbiting \(body.name)",
+                        detailText: "Radius: \(Int(firstMoon.radiusKm)) km • Gravity: \(String(format: "%.2f g", firstMoon.surfaceGravityG))",
                         kind: .moon,
                         worldPosition: moonWorldPos,
-                        radiusMetres: moonBody.radiusKm * 1_000.0,
+                        radiusMetres: max(200.0, firstMoon.radiusKm) * 1_000.0,
                         sectorGridX: 12,
                         sectorGridY: 3,
                         targetSystem: nil,
-                        supportsLocalJump: false
+                        supportsLocalJump: true
                     )
                 )
             }
         }
         self.systemBodyWaypoints = sysWPs
 
-        // Nearby Catalogued Star Systems within 18 LY from StarfallGalaxy
-        let neighbours = g.systems(within: 18.0, of: .sol, limit: 24).filter { $0.id != g.sol.id }
+        // Nearby Star Systems within 20 LY of the current system
+        let centrePos = sys.summary.position
+        let neighbours = galaxy.systems(within: 20.0, of: centrePos, limit: 26).filter { $0.id != sys.id }
         var starWPs: [NavigationWaypoint] = []
-        for sys in neighbours {
-            // Convert GalacticPosition (in LY relative to Sol) into a distant directional world coordinate
-            let posVec = SIMD3<Double>(sys.position.x, sys.position.y, sys.position.z)
-            let distLY = max(0.1, simd_length(posVec))
-            let dir = posVec / distLY
+        for nSys in neighbours {
+            let rel = SIMD3<Double>(
+                nSys.position.x - centrePos.x,
+                nSys.position.y - centrePos.y,
+                nSys.position.z - centrePos.z
+            )
+            let distLY = max(0.1, simd_length(rel))
+            let dir = rel / distLY
             let metresPerLY = 9.4607e15
             let worldPos = dir * (distLY * metresPerLY)
             let dText = String(format: "%.2f LY", distLY)
-            let popText = sys.isPopulated ? "Populated System" : "Uninhabited Frontier"
+            let popText = nSys.isPopulated ? "Populated System" : "Uninhabited Frontier"
 
             starWPs.append(
                 NavigationWaypoint(
-                    id: "wp_sys_\(sys.id.description)",
-                    name: sys.name,
-                    subtitle: "\(sys.primarySpectralType) • \(dText) from Sol",
-                    detailText: "\(sys.primaryClass.displayName) • \(sys.starCount) Star(s) • \(popText)",
+                    id: "wp_sys_\(nSys.id.description)",
+                    name: nSys.name,
+                    subtitle: "\(nSys.primarySpectralType) • \(dText) from \(sys.name)",
+                    detailText: "\(nSys.primaryClass.displayName) • \(nSys.starCount) Star(s) • \(popText)",
                     kind: .jumpTarget,
                     worldPosition: worldPos,
                     radiusMetres: 696_340_000.0,
                     sectorGridX: 8,
                     sectorGridY: 0,
-                    targetSystem: sys,
+                    targetSystem: nSys,
                     supportsLocalJump: false
                 )
             )
         }
         self.nearbyStarWaypoints = starWPs
+        self.plottedRoute = []
     }
 
     var allWaypoints: [NavigationWaypoint] {
@@ -281,7 +313,7 @@ final class NavigationWaypointManager: ObservableObject {
     func selectWaypoint(_ waypoint: NavigationWaypoint) {
         activeWaypoint = waypoint
         if let targetSys = waypoint.targetSystem {
-            plottedRoute = galaxy.route(from: galaxy.sol.id, to: targetSys.id, jumpRange: jumpRangeLY) ?? [galaxy.sol, targetSys]
+            plottedRoute = galaxy.route(from: currentSystem.id, to: targetSys.id, jumpRange: jumpRangeLY) ?? [currentSystem.summary, targetSys]
         } else {
             plottedRoute = []
         }
@@ -301,9 +333,9 @@ final class NavigationWaypointManager: ObservableObject {
     static func formatDistance(_ metres: Double) -> String {
         let lyMetres = 9.4607e15
         let auMetres = 149_597_870_700.0
-        if metres >= lyMetres * 0.1 {
+        if metres >= lyMetres * 0.05 {
             return String(format: "%.2f LY", metres / lyMetres)
-        } else if metres >= auMetres * 0.05 {
+        } else if metres >= auMetres * 0.01 {
             return String(format: "%.2f AU", metres / auMetres)
         } else if metres >= 1_000_000.0 {
             return String(format: "%.0f km", metres / 1_000.0)
