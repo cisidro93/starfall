@@ -5,8 +5,9 @@ import StarfallGalaxy
 
 enum WaypointKind: String, Sendable, CaseIterable {
     case station = "STATION"
+    case miningBelt = "MINING BELT"
     case combatZone = "COMBAT ZONE"
-    case beacon = "SALVAGE BEACON"
+    case beacon = "SALVAGE / USS"
     case planet = "PLANET"
     case moon = "MOON"
     case star = "STAR"
@@ -15,6 +16,7 @@ enum WaypointKind: String, Sendable, CaseIterable {
     var iconName: String {
         switch self {
         case .station: return "S"
+        case .miningBelt: return "❖"
         case .combatZone: return "▲"
         case .beacon: return "◇"
         case .planet: return "●"
@@ -27,6 +29,7 @@ enum WaypointKind: String, Sendable, CaseIterable {
     var color: Color {
         switch self {
         case .station: return .cyan
+        case .miningBelt: return .yellow
         case .combatZone: return .red
         case .beacon: return .mint
         case .planet: return .orange
@@ -112,8 +115,25 @@ final class NavigationWaypointManager: ObservableObject {
         currentSystem.settlement?.economy ?? .colony
     }
 
+    /// EVE-style numeric + tier Security Rating (e.g., "1.0 HIGH-SEC", "0.6 MED-SEC", "0.2 LOW-SEC")
     var primarySecurityText: String {
-        currentSystem.settlement?.security.rawValue ?? "Uninhabited"
+        let jitter = Double(currentSystem.id.rawValue % 3) * 0.1
+        guard let sec = currentSystem.settlement?.security else {
+            return "0.1 LAWLESS"
+        }
+        switch sec {
+        case .high:
+            let val = max(0.8, 1.0 - jitter)
+            return String(format: "%.1f HIGH-SEC", val)
+        case .medium:
+            let val = 0.5 + jitter
+            return String(format: "%.1f MED-SEC", val)
+        case .low:
+            let val = 0.2 + jitter * 0.5
+            return String(format: "%.1f LOW-SEC", val)
+        case .lawless:
+            return "0.1 NULL-SEC"
+        }
     }
 
     func loadSystem(systemID: SystemID) {
@@ -134,15 +154,17 @@ final class NavigationWaypointManager: ObservableObject {
         let anchorName = primaryPlanet?.name ?? sys.name
 
         let gagarinPos = SIMD3<Double>(0.0, 0.0, -900.0)
+        let beltAlphaPos = SIMD3<Double>(-380.0, -35.0, -640.0)
         let patrolAlphaPos = SIMD3<Double>(-220.0, 45.0, -480.0)
         let derelictPos = SIMD3<Double>(480.0, -75.0, -560.0)
         let navBeaconPos = SIMD3<Double>(140.0, 110.0, -320.0)
+        let ussPos = SIMD3<Double>(-420.0, 130.0, -380.0)
 
         let stnWP = NavigationWaypoint(
             id: "wp_primary_station",
             name: stnName,
-            subtitle: "Ring Station • Orbiting \(anchorName)",
-            detailText: "Primary orbital Coriolis/Ring port in \(sys.name). Request docking clearance within 7.5 km to land on Pad 04 and access Starport Services.",
+            subtitle: "Ring Station • \(primaryEconomy.rawValue) Economy",
+            detailText: "Primary orbital Coriolis/Ring port orbiting \(anchorName). Fly into the cyan mail-slot or tap DOCK PAD 04 within 1.5 km to trade, outfit, or buy ships.",
             kind: .station,
             worldPosition: gagarinPos,
             radiusMetres: 165.0,
@@ -152,11 +174,25 @@ final class NavigationWaypointManager: ObservableObject {
             supportsLocalJump: true
         )
 
+        let beltWP = NavigationWaypoint(
+            id: "wp_asteroid_belt",
+            name: "\(sys.name) Asteroid Belt Alpha",
+            subtitle: "Rich Mining Pocket • Titanium, Core Crystal & Void Opals",
+            detailText: "Dense orbital mineral cluster. Fire lasers at glowing asteroids to fracture ore canisters and tractor-scoop them into your cargo hold.",
+            kind: .miningBelt,
+            worldPosition: beltAlphaPos,
+            radiusMetres: 180.0,
+            sectorGridX: 3,
+            sectorGridY: 7,
+            targetSystem: nil,
+            supportsLocalJump: true
+        )
+
         let patrolWP = NavigationWaypoint(
             id: "wp_patrol_alpha",
-            name: "Resource Extraction / Patrol Zone",
-            subtitle: "Combat Zone • Wanted Pirate Drones (+12,500 CR)",
-            detailText: "Active pirate interception zone. Destroy wanted aggressor drones to earn 12,500 CR bounty vouchers redeemable at \(stnName).",
+            name: "Hazardous Extraction Site [HazRES]",
+            subtitle: "Combat Zone • Wanted Pirates (+12.5K–25K CR)",
+            detailText: "Active pirate interception pocket. Destroy wanted aggressor drones and Pirate Lords for combat bounty vouchers.",
             kind: .combatZone,
             worldPosition: patrolAlphaPos,
             radiusMetres: 120.0,
@@ -169,12 +205,12 @@ final class NavigationWaypointManager: ObservableObject {
         let derelictWP = NavigationWaypoint(
             id: "wp_derelict_hulk",
             name: "Forsaken Relay Hulk",
-            subtitle: "Salvage Wreckage • High-Orbit Debris",
-            detailText: "Shattered deep-space relay superstructure surrounded by floating hull plating.",
+            subtitle: "Salvage Wreckage • Ancient Salvage Cores",
+            detailText: "Shattered deep-space relay superstructure surrounded by salvageable cargo canisters and hull plating.",
             kind: .beacon,
             worldPosition: derelictPos,
             radiusMetres: 60.0,
-            sectorGridX: 11,
+            sectorGridX: 12,
             sectorGridY: 6,
             targetSystem: nil,
             supportsLocalJump: true
@@ -182,19 +218,41 @@ final class NavigationWaypointManager: ObservableObject {
 
         let navBeaconWP = NavigationWaypoint(
             id: "wp_nav_beacon",
-            name: "\(sys.name) Nav Beacon",
-            subtitle: "System Telemetry Transponder • Sector E8",
-            detailText: "High-gain system navigation transponder broadcasting \(sys.name) orbital ephemeris and trade lane data.",
+            name: "\(sys.name) Nav Beacon & Trade Lane",
+            subtitle: "Convoy Corridor • System Authority Patrol",
+            detailText: "High-gain system navigation transponder where allied freighters and System Authority Enforcers enter orbital space.",
             kind: .beacon,
             worldPosition: navBeaconPos,
-            radiusMetres: 15.0,
+            radiusMetres: 20.0,
             sectorGridX: 9,
             sectorGridY: 7,
             targetSystem: nil,
             supportsLocalJump: true
         )
 
-        self.localWaypoints = [stnWP, patrolWP, derelictWP, navBeaconWP]
+        // Procedural Unidentified Signal Source (USS) seeded by system ID
+        let ussTypes: [(String, String, String)] = [
+            ("USS: Distress Call [Convoy Ambush]", "Procedural Encounter • Allied Hauler Under Fire", "Emergency transponder broadcast from a merchant freighter ambushed by raiders."),
+            ("USS: Degraded Emissions [Black Box]", "Procedural Salvage • High-Value Salvage Cores", "Faint telemetry signature surrounded by drifting Ancient Salvage Cores."),
+            ("USS: Crystalline Anomaly [Void Opals]", "Procedural Motherlode • Ultra-Pure Mineral Cluster", "Rare deep-space crystalline cluster rich in Void Opal deposits."),
+            ("USS: Pirate Dread-Leader Signature", "Procedural Boss • +25,000 CR Elite Bounty", "High-energy FSD wake belonging to a Wanted Pirate Ace interceptor.")
+        ]
+        let ussPick = ussTypes[Int(sys.id.rawValue % UInt64(ussTypes.count))]
+        let ussWP = NavigationWaypoint(
+            id: "wp_procedural_uss",
+            name: ussPick.0,
+            subtitle: ussPick.1,
+            detailText: ussPick.2,
+            kind: .beacon,
+            worldPosition: ussPos,
+            radiusMetres: 45.0,
+            sectorGridX: 4,
+            sectorGridY: 3,
+            targetSystem: nil,
+            supportsLocalJump: true
+        )
+
+        self.localWaypoints = [stnWP, beltWP, patrolWP, derelictWP, navBeaconWP, ussWP]
         self.activeWaypoint = stnWP
 
         // Build System Bodies & Stations

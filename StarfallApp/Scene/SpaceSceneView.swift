@@ -3,6 +3,23 @@ import RealityKit
 import simd
 import StarfallGalaxy
 
+enum AutopilotFlightMode: Sendable {
+    case manual
+    case approach(name: String, targetPos: SIMD3<Double>)
+    case orbit500m(name: String, centerPos: SIMD3<Double>)
+
+    var statusText: String {
+        switch self {
+        case .manual:
+            return ""
+        case .approach(let name, _):
+            return "AUTO: APPROACH \(name)"
+        case .orbit500m(let name, _):
+            return "AUTO: ORBIT 500M \(name)"
+        }
+    }
+}
+
 @MainActor
 final class SceneController: ObservableObject {
     let rootEntity = Entity()
@@ -20,6 +37,10 @@ final class SceneController: ObservableObject {
     var originFrame = FloatingOriginFrame(originWorldPosition: .zero, thresholdMetres: 2_000.0)
     var fixedAccumulator: Double = 0.0
     var stationRotationAngle: Float = 0.0
+
+    // EVE Tactical Autopilot state
+    var autopilotMode: AutopilotFlightMode = .manual
+    var orbitPhaseAngle: Float = 0.0
 
     // Frame Shift Drive (Supercruise & Hyperspace Witch-Space) state
     var fsdCountdown: Float = 0.0
@@ -56,16 +77,22 @@ final class SceneController: ObservableObject {
         let env = SolSceneBuilder.buildSolEnvironment(into: rootEntity)
         solEnv = env
 
-        // 3. Combat drones, Forsaken Relay Hulk, Nav Beacon & weapon tracer beams
+        // 3. Combat drones, Asteroid Belt, Loot Canisters, Friendly Traffic & Weapon Tracers
         combat.setupCombatEntities(into: rootEntity)
-        combat.onDroneKilled = { [weak commander] callsign in
-            commander?.recordPirateKill(callsign: callsign)
+        combat.onDroneKilled = { [weak commander] callsign, isBoss in
+            commander?.recordPirateKill(callsign: callsign, isBoss: isBoss)
+        }
+        combat.onCanisterScooped = { [weak commander] commodityID, label, isMiningOre in
+            commander?.collectCanister(commodityID: commodityID, label: label, isMiningOre: isMiningOre)
+        }
+        combat.onPlayerDestroyedRescue = { [weak self, weak commander, weak navManager] in
+            guard let self, let commander, let navManager else { return }
+            self.dockAtPrimaryStation(commander: commander, navManager: navManager)
+            commander.postBanner("EMERGENCY ESCAPE POD RECOVERED • SHIP RESTORED AT \(navManager.primaryStationName.uppercased())", duration: 5.0)
         }
 
-        // 4. Player starfighter (SF-1V Kestrel)
-        let ship = ShipEntityBuilder.makeKestrelShip()
-        rootEntity.addChild(ship.root)
-        builtShip = ship
+        // 4. Player starfighter (built from Commander's active Shipyard hull)
+        rebuildPlayerShip(hull: commander.activeHull)
 
         // 5. Virtual perspective camera
         cameraEntity.name = "MainVirtualCamera"
@@ -79,9 +106,22 @@ final class SceneController: ObservableObject {
         if savedID != navManager.currentSystem.id {
             navManager.loadSystem(systemID: savedID)
         }
+        if var currentEnv = solEnv {
+            SolSceneBuilder.applySystemVisuals(to: &currentEnv, system: navManager.currentSystem)
+            solEnv = currentEnv
+        }
 
         applyCameraModeVisibility()
         syncSceneTransforms(dt: 1.0 / 60.0)
+    }
+
+    func rebuildPlayerShip(hull: ShipHullCatalogItem) {
+        builtShip?.root.removeFromParent()
+        let newShip = ShipEntityBuilder.makeShip(hullID: hull.id)
+        rootEntity.addChild(newShip.root)
+        builtShip = newShip
+        flight.spec = hull.flightSpec
+        applyCameraModeVisibility()
     }
 
     func toggleCameraMode() {
@@ -91,22 +131,53 @@ final class SceneController: ObservableObject {
         applyCameraModeVisibility()
     }
 
+    func selectOverviewContact(_ item: OverviewContactItem, navManager: NavigationWaypointManager, commander: CommanderProfile) {
+        CockpitAudioManager.shared.playTargetLock()
+        if let dIdx = item.droneIndex {
+            combat.lockedDroneIndex = dIdx
+            combat.lockedAsteroidIndex = nil
+            commander.postBanner("OVERVIEW TARGET LOCKED: \(item.name)")
+        } else if let wpID = item.waypointID, let wp = navManager.localWaypoints.first(where: { $0.id == wpID }) {
+            navManager.selectWaypoint(wp)
+            commander.postBanner("WAYPOINT LOCKED: \(wp.name.uppercased())")
+        } else {
+            commander.postBanner("OVERVIEW SELECTED: \(item.name) (\(item.distanceText))")
+        }
+    }
+
+    func engageOverviewApproach(_ item: OverviewContactItem, inputManager: ControllerInputManager, commander: CommanderProfile) {
+        autopilotMode = .approach(name: item.name, targetPos: item.worldPosition)
+        inputManager.setThrottle(0.54)
+        CockpitAudioManager.shared.playTargetLock()
+        commander.postBanner("AUTOPILOT: APPROACHING \(item.name) AT BLUE-ZONE SPEED")
+    }
+
+    func engageOverviewOrbit(_ item: OverviewContactItem, inputManager: ControllerInputManager, commander: CommanderProfile) {
+        autopilotMode = .orbit500m(name: item.name, centerPos: item.worldPosition)
+        inputManager.setThrottle(0.52)
+        CockpitAudioManager.shared.playTargetLock()
+        commander.postBanner("AUTOPILOT: ORBITING \(item.name) AT 500M")
+    }
+
     func initiateFSDJump(to waypoint: NavigationWaypoint, commander: CommanderProfile) {
+        autopilotMode = .manual
         if let targetSys = waypoint.targetSystem {
             pendingHyperspaceSystem = targetSys
             pendingFSDWaypoint = waypoint
             fsdCountdown = 3.2
+            CockpitAudioManager.shared.playFSDCharge()
             commander.postBanner("FRAME SHIFT DRIVE CHARGING → \(targetSys.name.uppercased())", duration: 3.5)
         } else if waypoint.supportsLocalJump {
             pendingHyperspaceSystem = nil
             pendingFSDWaypoint = waypoint
             fsdCountdown = 2.0
+            CockpitAudioManager.shared.playFSDCharge()
             commander.postBanner("SUPERCRUISE CHARGING → \(waypoint.name.uppercased())", duration: 2.5)
         }
     }
 
     private func completeLocalSupercruiseDrop(to waypoint: NavigationWaypoint, commander: CommanderProfile) {
-        let offset = SIMD3<Double>(0.0, 18.0, 260.0)
+        let offset = SIMD3<Double>(0.0, 16.0, 210.0)
         playerWorldPos.position = waypoint.worldPosition + offset
         let toDest = waypoint.worldPosition - playerWorldPos.position
         let dist = max(1.0, simd_length(toDest))
@@ -114,31 +185,35 @@ final class SceneController: ObservableObject {
         flight.orientation = simd_quatf(from: SIMD3<Float>(0, 0, -1), to: fwd)
         chaseOrientation = flight.orientation
         flight.angularVelocity = .zero
-        flight.velocity = fwd * 85.0
+        flight.velocity = fwd * 75.0
         originFrame.updateIfNeeded(playerWorldPosition: playerWorldPos.position)
         syncSceneTransforms(dt: 1.0 / 60.0)
+        CockpitAudioManager.shared.playHyperspaceBoom()
         commander.postBanner("DROPPED FROM SUPERCRUISE AT \(waypoint.name.uppercased())", duration: 3.5)
     }
 
     func dockAtPrimaryStation(commander: CommanderProfile, navManager: NavigationWaypointManager) {
+        autopilotMode = .manual
         flight.velocity = .zero
         flight.angularVelocity = .zero
         combat.playerShields = 100.0
         combat.playerHull = 100.0
         commander.dockedStationName = navManager.primaryStationName
         commander.isDocked = true
+        CockpitAudioManager.shared.playTractorScoop()
         commander.postBanner("DOCKING COMPLETE • WELCOME TO \(navManager.primaryStationName.uppercased())")
     }
 
     func launchFromStation(commander: CommanderProfile) {
+        autopilotMode = .manual
         commander.isDocked = false
-        // Place ship 420m outside the mail-slot facing open orbit
         playerWorldPos.position = SIMD3<Double>(0.0, 10.0, -420.0)
         flight.orientation = simd_quatf(angle: .pi, axis: SIMD3<Float>(0, 1, 0))
         chaseOrientation = flight.orientation
         flight.velocity = flight.forwardVector * 75.0
         originFrame.updateIfNeeded(playerWorldPosition: playerWorldPos.position)
         syncSceneTransforms(dt: 1.0 / 60.0)
+        CockpitAudioManager.shared.playBoostSurge()
         commander.postBanner("LAUNCH CLEARANCE GRANTED • CLEAR STATION PERIMETER", duration: 4.0)
     }
 
@@ -173,12 +248,20 @@ final class SceneController: ObservableObject {
             }
         }
 
+        commander.stepCommsTicker(
+            dt: fdt,
+            systemName: navManager.currentSystem.name,
+            stationName: navManager.primaryStationName,
+            securityText: navManager.primarySecurityText
+        )
+
         // Handle active FSD charging & Witch-Space Hyperspace Tunnel
         if fsdCountdown > 0.0 {
             fsdCountdown = max(0.0, fsdCountdown - fdt)
             if fsdCountdown <= 0.0 {
                 if pendingHyperspaceSystem != nil {
                     hyperspaceTimer = 2.8
+                    CockpitAudioManager.shared.playHyperspaceBoom()
                 } else if let wp = pendingFSDWaypoint {
                     pendingFSDWaypoint = nil
                     completeLocalSupercruiseDrop(to: wp, commander: commander)
@@ -190,6 +273,10 @@ final class SceneController: ObservableObject {
                 pendingHyperspaceSystem = nil
                 pendingFSDWaypoint = nil
                 navManager.loadSystem(systemID: destSys.id)
+                if var currentEnv = solEnv {
+                    SolSceneBuilder.applySystemVisuals(to: &currentEnv, system: navManager.currentSystem)
+                    solEnv = currentEnv
+                }
                 commander.data.currentSystemRawID = destSys.id.rawValue
                 commander.data.systemsVisited += 1
                 commander.saveToDisk()
@@ -198,7 +285,12 @@ final class SceneController: ObservableObject {
                 chaseOrientation = flight.orientation
                 flight.velocity = flight.forwardVector * 70.0
                 originFrame.updateIfNeeded(playerWorldPosition: .zero)
-                commander.postBanner("ARRIVED IN \(destSys.name.uppercased()) SYSTEM • \(navManager.primaryStationName.uppercased()) AHEAD", duration: 5.0)
+                CockpitAudioManager.shared.playHyperspaceBoom()
+                commander.postBanner("ARRIVED IN \(destSys.name.uppercased()) SYSTEM (\(navManager.primarySecurityText))", duration: 5.0)
+                commander.postRadioComms(
+                    sender: "\(navManager.primaryStationName.uppercased()) CONTROL",
+                    message: "Welcome to \(destSys.name), Commander. Docking bays are open."
+                )
             }
         }
 
@@ -212,6 +304,14 @@ final class SceneController: ObservableObject {
         if input.galaxyMapTriggered {
             onToggleNavMap()
         }
+        if input.boostTriggered && flight.canBoost {
+            CockpitAudioManager.shared.playBoostSurge()
+        }
+
+        // Manual stick movement disengages EVE Autopilot
+        if abs(input.pitch) > 0.18 || abs(input.yaw) > 0.18 {
+            autopilotMode = .manual
+        }
 
         // Free-look via Hold LB + Right Stick
         if input.isModifierHeld {
@@ -222,16 +322,46 @@ final class SceneController: ObservableObject {
             freeLookPitch *= max(0.0, 1.0 - fdt * 6.0)
         }
 
-        // Fixed 60 Hz simulation loop (scaled by Step 8 ENG pips + Outfitting Thruster bonus + Target Auto-Track)
+        // Compute target assist or EVE Autopilot steering direction in ship-local space
         let engSpeedMult = combat.distributor.engineSpeedMultiplier * commander.thrusterBonusMultiplier
         let boostChargeMult = combat.distributor.boostRechargeMultiplier
-        let targetAssistDir = combat.lockedTargetShipLocalDirection(
+        var targetAssistDir = combat.lockedTargetShipLocalDirection(
             playerWorldPos: playerWorldPos.position,
             playerOrientation: flight.orientation
         )
 
+        switch autopilotMode {
+        case .manual:
+            break
+        case .approach(_, let targetPos):
+            let delta = targetPos - playerWorldPos.position
+            let dist = simd_length(delta)
+            if dist < 85.0 {
+                autopilotMode = .manual
+            } else {
+                let unitW = SIMD3<Float>(Float(delta.x / dist), Float(delta.y / dist), Float(delta.z / dist))
+                targetAssistDir = flight.orientation.inverse.act(unitW)
+            }
+        case .orbit500m(_, let centerPos):
+            orbitPhaseAngle += fdt * 0.25
+            let orbitPt = centerPos + SIMD3<Double>(
+                Double(cos(orbitPhaseAngle)) * 220.0,
+                15.0,
+                Double(sin(orbitPhaseAngle)) * 220.0
+            )
+            let delta = orbitPt - playerWorldPos.position
+            let dist = max(1.0, simd_length(delta))
+            let unitW = SIMD3<Float>(Float(delta.x / dist), Float(delta.y / dist), Float(delta.z / dist))
+            targetAssistDir = flight.orientation.inverse.act(unitW)
+        }
+
         fixedAccumulator += clampedDT
         var tickInput = input
+        if case .manual = autopilotMode {
+            // keep user's autoTrackEnabled
+        } else {
+            tickInput.autoTrackEnabled = true
+        }
         var steps = 0
         while fixedAccumulator >= FlightPhysics.fixedTimeStep && steps < 6 {
             FlightPhysics.stepFixedTick(
@@ -248,7 +378,6 @@ final class SceneController: ObservableObject {
             steps += 1
         }
 
-        // Floating origin recentring check
         originFrame.updateIfNeeded(playerWorldPosition: playerWorldPos.position)
 
         // Check mail-slot automatic docking when player flies into the glowing cyan docking slot (< 45m from slot at (0, 0, -852))
@@ -257,17 +386,19 @@ final class SceneController: ObservableObject {
             dockAtPrimaryStation(commander: commander, navManager: navManager)
         }
 
-        // Step combat drones, weapons & power distributor pips
+        // Step combat drones, asteroid belt mining, canisters, friendly traffic & power distributor pips
         combat.stepCombat(
             dt: fdt,
             input: input,
             playerWorldPos: playerWorldPos.position,
             playerVelocity: flight.velocity,
             playerOrientation: flight.orientation,
-            originFrame: originFrame
+            originFrame: originFrame,
+            weaponDamageMultiplier: commander.weaponBonusMultiplier,
+            shieldBonusMultiplier: commander.shieldBonusMultiplier,
+            tractorRangeMetres: commander.tractorRangeMetres
         )
 
-        // Rotate station habitat wheel
         stationRotationAngle += fdt * 0.16
         if stationRotationAngle > .pi * 2.0 {
             stationRotationAngle -= .pi * 2.0
@@ -504,6 +635,11 @@ final class SceneController: ObservableObject {
             )
         }
 
+        let overviewContacts = combat.buildOverviewContacts(
+            playerWorldPos: playerWorldPos.position,
+            localWaypoints: navManager.localWaypoints
+        )
+
         var hasTarget = false
         var tName = "NO TARGET"
         var tState = ""
@@ -557,7 +693,12 @@ final class SceneController: ObservableObject {
             currentSystemSecurity: navManager.primarySecurityText,
             credits: commander.data.credits,
             unclaimedBountiesCR: commander.data.unclaimedBountiesCR,
+            cargoSummaryText: "\(commander.cargoUsedTons)/\(commander.data.cargoCapacity) T",
             statusBannerText: commander.statusBannerMessage,
+            radioSender: commander.radioSender,
+            radioMessage: commander.radioMessage,
+            autopilotStatusText: autopilotMode.statusText,
+            isAudioMuted: CockpitAudioManager.shared.isMuted,
             speedMetresPerSec: spd,
             maxSpeed: flight.spec.maxSpeed * combat.distributor.engineSpeedMultiplier * commander.thrusterBonusMultiplier,
             boostSpeed: flight.spec.boostSpeed * commander.thrusterBonusMultiplier,
@@ -593,6 +734,7 @@ final class SceneController: ObservableObject {
             compassDotY: compassY,
             isMassLocked: isMassLocked,
             sensorContacts: contacts,
+            overviewContacts: overviewContacts,
             hasLockedTarget: hasTarget,
             targetName: tName,
             targetStateText: tState,
@@ -607,6 +749,7 @@ final class SceneController: ObservableObject {
             leadScreenX: leadX,
             leadScreenY: leadY,
             showHitMarker: combat.hitMarkerTimer > 0.0,
+            showShieldHitFlash: combat.playerShieldHitTimer > 0.0,
             totalKills: commander.data.totalKills,
             playerShields: combat.playerShields,
             playerHull: combat.playerHull,
@@ -686,6 +829,7 @@ struct SpaceSceneView: View {
                     onToggleCamera: { sceneController.toggleCameraMode() },
                     onToggleFlightAssist: { inputManager.toggleFlightAssist() },
                     onToggleAutoTrack: { inputManager.toggleAutoTrack() },
+                    onToggleAudioMute: { CockpitAudioManager.shared.toggleMute() },
                     onTriggerBoost: { inputManager.requestBoost() },
                     onSetThrottle: { inputManager.setThrottle($0) },
                     onOpenNavMap: { showHoloNavMap = true },
@@ -701,7 +845,41 @@ struct SpaceSceneView: View {
                     onPipENG: { sceneController.combat.distributor.allocateENG() },
                     onPipWEP: { sceneController.combat.distributor.allocateWEP() },
                     onPipReset: { sceneController.combat.distributor.reset() },
-                    onOpenTuningDrawer: { showTuningDrawer.toggle() }
+                    onOpenTuningDrawer: { showTuningDrawer.toggle() },
+                    onSelectOverviewItem: { item in
+                        sceneController.selectOverviewContact(item, navManager: navManager, commander: commander)
+                    },
+                    onOverviewApproach: { item in
+                        sceneController.engageOverviewApproach(item, inputManager: inputManager, commander: commander)
+                    },
+                    onOverviewOrbit: { item in
+                        sceneController.engageOverviewOrbit(item, inputManager: inputManager, commander: commander)
+                    },
+                    onOverviewTractor: {
+                        let scooped = sceneController.combat.tractorNearestCanister(
+                            playerWorldPos: sceneController.playerWorldPos.position,
+                            maxRange: commander.tractorRangeMetres + 180.0
+                        )
+                        if !scooped {
+                            commander.postBanner("NO CANISTER WITHIN TRACTOR RANGE (\(Int(commander.tractorRangeMetres + 180.0)) M)")
+                        }
+                    },
+                    onOverviewWarpOrDock: { item in
+                        if item.isStation && metrics.hud.canDockAtStation {
+                            sceneController.dockAtPrimaryStation(commander: commander, navManager: navManager)
+                        } else if let wpID = item.waypointID, let wp = navManager.localWaypoints.first(where: { $0.id == wpID }) {
+                            navManager.selectWaypoint(wp)
+                            sceneController.initiateFSDJump(to: wp, commander: commander)
+                        } else {
+                            sceneController.engageOverviewApproach(item, inputManager: inputManager, commander: commander)
+                        }
+                    },
+                    onSetTouchPrimaryFire: { firing in
+                        inputManager.touchPrimaryFireHeld = firing
+                    },
+                    onSetTouchSecondaryFire: { firing in
+                        inputManager.touchSecondaryFireHeld = firing
+                    }
                 )
 
                 DebugOverlayView(
@@ -709,8 +887,8 @@ struct SpaceSceneView: View {
                     inputManager: inputManager,
                     showSolSheet: $showHoloNavMap
                 )
-                .padding(.top, 16)
-                .padding(.leading, 18)
+                .padding(.top, 12)
+                .padding(.leading, 16)
 
                 if showTuningDrawer {
                     HStack {
@@ -722,7 +900,7 @@ struct SpaceSceneView: View {
                             modernSteerMode: $inputManager.modernSteerMode,
                             minimalHUDMode: $minimalHUDMode,
                             onResetDefaults: {
-                                sceneController.flight.spec = ShipSpec.loadStarterSpec()
+                                sceneController.flight.spec = commander.activeHull.flightSpec
                                 inputManager.deadZone = 0.12
                                 inputManager.responseExponent = 2.10
                                 inputManager.modernSteerMode = true
@@ -752,10 +930,14 @@ struct SpaceSceneView: View {
                     StarportServicesView(
                         commander: commander,
                         navManager: navManager,
+                        onShipChanged: { newHull in
+                            sceneController.rebuildPlayerShip(hull: newHull)
+                        },
                         onRepairAndRefuel: {
                             sceneController.combat.playerShields = 100.0
                             sceneController.combat.playerHull = 100.0
                             commander.data.fuelTons = commander.data.maxFuelTons
+                            CockpitAudioManager.shared.playTractorScoop()
                             commander.postBanner("HULL REPAIRED & FUEL TANKS TOPPED UP (100%)")
                         },
                         onLaunchShip: {

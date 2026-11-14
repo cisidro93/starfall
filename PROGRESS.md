@@ -28,3 +28,15 @@
       - **Mission Board:** Complete solo **Patrol Sweep** and **Security** contracts for `+25,000 CR` to `+65,000 CR` payouts.
       - **Outfitting Workshop:** Upgrade your **Frame Shift Drive** (`Class D → A`, up to `27.5 LY` jump range), **Bi-Weave Shield Generator**, **A-Rated Vector Thrusters**, and **Overcharged Gimbal Weapon Array**!
     - **Persistent Solo Save File:** Automatically saves your Commander profile (`Credits`, `Combat/Trade/Explorer Ranks`, `Cargo Hold`, `Outfitting Grades`, and `Current Star System`) to `Documents/starfall_commander_save.json` on your iPad.
+
+### Milestone Build C — Living Frontier, EVE Tactical Overview, Asteroid Mining & 5-Hull Shipyard
+- **What was done:**
+  - **Collapsible EVE Tactical Overview + One-Tap Autopilot (`FlightHUDView.swift`, `SpaceSceneView.swift`, `CombatSystem.swift`):**
+    - Collapsible right-hand **EVE Overview table** (`ALL`, `HOSTILES`, `MINING/LOOT`, `NAV/TRAFFIC`) sorted by live distance, with one-tap **`APPROACH`**, **`ORBIT 500M`**, **`TRACTOR`**, and **`WARP/DOCK`** commands (moving the flight stick automatically returns control to manual flight).
+  - **Thermal Asteroid Mining & Magnetic Tractor Scoop (`CombatSystem.swift`, `CommanderProfile.swift`):**
+    - Added procedural 3D **Asteroid Belt Alpha** (`Titanium`, `Core Crystal Ore`, `Void Opal Crystals`). Firing lasers/cannons at asteroids or pirates spawns physical 3D **Ore & Salvage Canisters** that automatically tractor-beam into your hold within `130m–260m` (or via the Overview `TRACTOR` button).
+  - **5-Hull Shipyard with Custom 3D Ships & Cockpits (`CommanderProfile.swift`, `ShipEntityBuilder.swift`, `StarportServicesView.swift`):**
+    - Added the **SHIPYARD** tab in Starport Services featuring `SF-1V Kestrel`, `SF-2A Viper`, `SF-4C Cobra Mk IV`, `SF-7T Atlas Barge`, and `SF-9X Astrolabe Corvette`.
+  - **Living Universe, Dynamic Spectral 3D Stars, Planetary Rings & Procedural Signal Sources (`SolSceneBuilder.swift`, `NavigationWaypointManager.swift`):**
+    - Hyperspace jumps dynamically re-color the 3D Star, Corona, Sunlight, Primary Planet, and **3D Planetary Rings** by spectral class and seed.
+    - Added friendly **System Authority Enforcers**, **Trade Freighter Convoys**, **Mining Barges**, **Procedural Unidentified Signal Sources (`USS`)**, **Pirate Dread-Leader Bosses (`+25,000 CR`)**, **Enemy Return Fire**, **Live Radio Comms Chatter**, and **Procedural Cockpit Audio (`CockpitAudioManager.swift`)**.

@@ -102,10 +102,21 @@ struct DebugOverlayView: View {
             HStack(spacing: 8) {
                 Circle()
                     .fill(budgetDotColor)
-                    .frame(width: 10, height: 10)
-                Text("\(metrics.fpsText) • \(metrics.frameTimeText)")
+                    .frame(width: 9, height: 9)
+                Text(metrics.fpsText)
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .foregroundStyle(.cyan)
+                Button {
+                    inputManager.toggleVirtualController()
+                } label: {
+                    Text(virtualPadButtonLabel)
+                        .font(.system(size: 14, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Color.purple.opacity(0.26))
+                        .foregroundStyle(.purple)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
                 Spacer()
                 Button {
                     metrics.isExpanded.toggle()
@@ -160,8 +171,8 @@ struct DebugOverlayView: View {
                 }
             }
         }
-        .frame(width: metrics.isExpanded ? 400 : 270, alignment: .leading)
-        .padding(12)
+        .frame(width: metrics.isExpanded ? 390 : 285, alignment: .leading)
+        .padding(9)
         .background(Color.black.opacity(0.70))
         .overlay(
             RoundedRectangle(cornerRadius: 10)

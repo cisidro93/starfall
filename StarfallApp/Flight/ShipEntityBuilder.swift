@@ -7,6 +7,7 @@ import simd
 enum ShipEntityBuilder {
 
     struct BuiltShip {
+        let hullID: String
         let root: Entity
         let exteriorRoot: Entity
         let cockpitInteriorRoot: Entity
@@ -15,21 +16,58 @@ enum ShipEntityBuilder {
     }
 
     static func makeKestrelShip() -> BuiltShip {
+        makeShip(hullID: "sf1v_kestrel")
+    }
+
+    static func makeShip(hullID: String) -> BuiltShip {
         let root = Entity()
-        root.name = "PlayerShip_Kestrel"
+        root.name = "PlayerShip_\(hullID)"
 
         let exterior = Entity()
         exterior.name = "ShipExterior"
         root.addChild(exterior)
 
-        let gunmetal = SimpleMaterial(
-            color: UIColor(red: 0.16, green: 0.18, blue: 0.22, alpha: 1.0),
-            roughness: 0.32,
+        let hullColor: UIColor
+        let trimColor: UIColor
+        let plumeColor: UIColor
+        let hullScale: SIMD3<Float>
+
+        switch hullID {
+        case "sf2a_viper":
+            hullColor = UIColor(red: 0.14, green: 0.16, blue: 0.24, alpha: 1.0)
+            trimColor = UIColor(red: 1.00, green: 0.28, blue: 0.22, alpha: 1.0)
+            plumeColor = UIColor(red: 0.35, green: 0.92, blue: 1.00, alpha: 1.0)
+            hullScale = SIMD3<Float>(0.90, 0.92, 1.15)
+        case "sf4c_cobra":
+            hullColor = UIColor(red: 0.20, green: 0.24, blue: 0.30, alpha: 1.0)
+            trimColor = UIColor(red: 0.20, green: 0.88, blue: 0.95, alpha: 1.0)
+            plumeColor = UIColor(red: 0.22, green: 0.95, blue: 0.82, alpha: 1.0)
+            hullScale = SIMD3<Float>(1.28, 1.05, 1.02)
+        case "sf7t_atlas":
+            hullColor = UIColor(red: 0.28, green: 0.24, blue: 0.18, alpha: 1.0)
+            trimColor = UIColor(red: 0.98, green: 0.68, blue: 0.16, alpha: 1.0)
+            plumeColor = UIColor(red: 1.00, green: 0.68, blue: 0.22, alpha: 1.0)
+            hullScale = SIMD3<Float>(1.38, 1.35, 1.18)
+        case "sf9x_astrolabe":
+            hullColor = UIColor(red: 0.10, green: 0.12, blue: 0.18, alpha: 1.0)
+            trimColor = UIColor(red: 0.96, green: 0.78, blue: 0.32, alpha: 1.0)
+            plumeColor = UIColor(red: 0.45, green: 0.96, blue: 1.00, alpha: 1.0)
+            hullScale = SIMD3<Float>(1.32, 1.18, 1.30)
+        default:
+            hullColor = UIColor(red: 0.16, green: 0.18, blue: 0.22, alpha: 1.0)
+            trimColor = UIColor(red: 0.85, green: 0.60, blue: 0.28, alpha: 1.0)
+            plumeColor = UIColor(red: 0.25, green: 0.85, blue: 1.0, alpha: 1.0)
+            hullScale = SIMD3<Float>(1.0, 1.0, 1.0)
+        }
+
+        let armorMat = SimpleMaterial(
+            color: hullColor,
+            roughness: 0.30,
             isMetallic: true
         )
-        let bronzeGold = SimpleMaterial(
-            color: UIColor(red: 0.85, green: 0.60, blue: 0.28, alpha: 1.0),
-            roughness: 0.25,
+        let accentMat = SimpleMaterial(
+            color: trimColor,
+            roughness: 0.22,
             isMetallic: true
         )
         let darkAlloy = SimpleMaterial(
@@ -43,44 +81,40 @@ enum ShipEntityBuilder {
             isMetallic: false
         )
 
-        // Custom faceted delta-wedge hull mesh (pointing forward along -Z)
         if let hullMesh = makeDeltaHullMesh() {
-            let hull = ModelEntity(mesh: hullMesh, materials: [gunmetal])
+            let hull = ModelEntity(mesh: hullMesh, materials: [armorMat])
             hull.name = "DeltaHull"
+            hull.scale = hullScale
             exterior.addChild(hull)
         }
 
-        // Gold chevron wing trim bars matching the Starfall emblem aesthetic
-        let trimMesh = MeshResource.generateBox(size: SIMD3<Float>(0.16, 0.08, 4.8), cornerRadius: 0.02)
-        let leftTrim = ModelEntity(mesh: trimMesh, materials: [bronzeGold])
-        leftTrim.position = SIMD3<Float>(-1.75, 0.02, -0.3)
+        let trimMesh = MeshResource.generateBox(size: SIMD3<Float>(0.18, 0.09, 4.8), cornerRadius: 0.02)
+        let leftTrim = ModelEntity(mesh: trimMesh, materials: [accentMat])
+        leftTrim.position = SIMD3<Float>(-1.75 * hullScale.x, 0.02, -0.3)
         leftTrim.orientation = simd_quatf(angle: -0.46, axis: SIMD3<Float>(0, 1, 0))
         exterior.addChild(leftTrim)
 
-        let rightTrim = ModelEntity(mesh: trimMesh, materials: [bronzeGold])
-        rightTrim.position = SIMD3<Float>(1.75, 0.02, -0.3)
+        let rightTrim = ModelEntity(mesh: trimMesh, materials: [accentMat])
+        rightTrim.position = SIMD3<Float>(1.75 * hullScale.x, 0.02, -0.3)
         rightTrim.orientation = simd_quatf(angle: 0.46, axis: SIMD3<Float>(0, 1, 0))
         exterior.addChild(rightTrim)
 
-        // Cockpit canopy blister on top deck
         let canopyMesh = MeshResource.generateBox(size: SIMD3<Float>(0.92, 0.46, 2.3), cornerRadius: 0.22)
         let canopy = ModelEntity(mesh: canopyMesh, materials: [canopyGlass])
-        canopy.position = SIMD3<Float>(0.0, 0.36, -0.65)
+        canopy.position = SIMD3<Float>(0.0, 0.36 * hullScale.y, -0.65)
         exterior.addChild(canopy)
 
-        // Twin canted vertical stabilisers
         let finMesh = MeshResource.generateBox(size: SIMD3<Float>(0.10, 0.85, 1.45), cornerRadius: 0.03)
-        let leftFin = ModelEntity(mesh: finMesh, materials: [bronzeGold])
-        leftFin.position = SIMD3<Float>(-1.15, 0.45, 1.85)
+        let leftFin = ModelEntity(mesh: finMesh, materials: [accentMat])
+        leftFin.position = SIMD3<Float>(-1.15 * hullScale.x, 0.45, 1.85)
         leftFin.orientation = simd_quatf(angle: 0.28, axis: SIMD3<Float>(0, 0, 1))
         exterior.addChild(leftFin)
 
-        let rightFin = ModelEntity(mesh: finMesh, materials: [bronzeGold])
-        rightFin.position = SIMD3<Float>(1.15, 0.45, 1.85)
+        let rightFin = ModelEntity(mesh: finMesh, materials: [accentMat])
+        rightFin.position = SIMD3<Float>(1.15 * hullScale.x, 0.45, 1.85)
         rightFin.orientation = simd_quatf(angle: -0.28, axis: SIMD3<Float>(0, 0, 1))
         exterior.addChild(rightFin)
 
-        // Twin rear thruster housings
         let nozzleMesh = MeshResource.generateBox(size: SIMD3<Float>(0.78, 0.52, 0.90), cornerRadius: 0.12)
         let leftNozzle = ModelEntity(mesh: nozzleMesh, materials: [darkAlloy])
         leftNozzle.position = SIMD3<Float>(-0.72, 0.0, 2.55)
@@ -90,9 +124,8 @@ enum ShipEntityBuilder {
         rightNozzle.position = SIMD3<Float>(0.72, 0.0, 2.55)
         exterior.addChild(rightNozzle)
 
-        // Glowing engine exhaust plumes (+Z is aft)
         let plumeMesh = MeshResource.generateSphere(radius: 0.34)
-        let plumeMat = UnlitMaterial(color: UIColor(red: 0.25, green: 0.85, blue: 1.0, alpha: 1.0))
+        let plumeMat = UnlitMaterial(color: plumeColor)
 
         let leftPlume = ModelEntity(mesh: plumeMesh, materials: [plumeMat])
         leftPlume.position = SIMD3<Float>(-0.72, 0.0, 3.15)
@@ -104,11 +137,11 @@ enum ShipEntityBuilder {
         rightPlume.scale = SIMD3<Float>(0.85, 0.65, 1.8)
         exterior.addChild(rightPlume)
 
-        // Cockpit interior frame (visible in First-Person Cockpit camera mode)
-        let cockpitInterior = makeCockpitInterior()
+        let cockpitInterior = makeCockpitInterior(hullID: hullID, accentColor: trimColor)
         root.addChild(cockpitInterior)
 
         return BuiltShip(
+            hullID: hullID,
             root: root,
             exteriorRoot: exterior,
             cockpitInteriorRoot: cockpitInterior,
@@ -117,7 +150,7 @@ enum ShipEntityBuilder {
         )
     }
 
-    private static func makeCockpitInterior() -> Entity {
+    private static func makeCockpitInterior(hullID: String, accentColor: UIColor) -> Entity {
         let interior = Entity()
         interior.name = "CockpitInteriorFrame"
 
@@ -131,7 +164,7 @@ enum ShipEntityBuilder {
             roughness: 0.75,
             isMetallic: false
         )
-        let holoAmber = UnlitMaterial(color: UIColor(red: 0.98, green: 0.62, blue: 0.18, alpha: 1.0))
+        let holoAccent = UnlitMaterial(color: accentColor)
         let holoCyan = UnlitMaterial(color: UIColor(red: 0.20, green: 0.86, blue: 1.00, alpha: 1.0))
 
         // Forward lower dashboard coaming below sightline
@@ -140,11 +173,10 @@ enum ShipEntityBuilder {
         dash.position = SIMD3<Float>(0.0, -0.44, -1.15)
         interior.addChild(dash)
 
-        // Glowing amber/cyan holo-strip on top of the coaming
-        let stripMesh = MeshResource.generateBox(size: SIMD3<Float>(0.90, 0.012, 0.025))
-        let amberStrip = ModelEntity(mesh: stripMesh, materials: [holoAmber])
-        amberStrip.position = SIMD3<Float>(0.0, -0.31, -0.92)
-        interior.addChild(amberStrip)
+        let stripMesh = MeshResource.generateBox(size: SIMD3<Float>(0.90, 0.014, 0.025))
+        let centerStrip = ModelEntity(mesh: stripMesh, materials: [holoAccent])
+        centerStrip.position = SIMD3<Float>(0.0, -0.31, -0.92)
+        interior.addChild(centerStrip)
 
         let sideStripMesh = MeshResource.generateBox(size: SIMD3<Float>(0.28, 0.010, 0.02))
         let leftCyanStrip = ModelEntity(mesh: sideStripMesh, materials: [holoCyan])
@@ -157,24 +189,23 @@ enum ShipEntityBuilder {
         rightCyanStrip.orientation = simd_quatf(angle: -0.25, axis: SIMD3<Float>(0, 1, 0))
         interior.addChild(rightCyanStrip)
 
-        // Left & right angled canopy A-pillars
+        let pillarSpread: Float = (hullID == "sf4c_cobra" || hullID == "sf7t_atlas") ? 0.80 : 0.68
         let pillarMesh = MeshResource.generateBox(size: SIMD3<Float>(0.045, 0.95, 0.055), cornerRadius: 0.01)
         let leftPillar = ModelEntity(mesh: pillarMesh, materials: [strutMat])
-        leftPillar.position = SIMD3<Float>(-0.68, 0.05, -1.05)
+        leftPillar.position = SIMD3<Float>(-pillarSpread, 0.05, -1.05)
         let leftTiltZ = simd_quatf(angle: -0.28, axis: SIMD3<Float>(0, 0, 1))
         let leftTiltX = simd_quatf(angle: 0.42, axis: SIMD3<Float>(1, 0, 0))
         leftPillar.orientation = simd_mul(leftTiltZ, leftTiltX)
         interior.addChild(leftPillar)
 
         let rightPillar = ModelEntity(mesh: pillarMesh, materials: [strutMat])
-        rightPillar.position = SIMD3<Float>(0.68, 0.05, -1.05)
+        rightPillar.position = SIMD3<Float>(pillarSpread, 0.05, -1.05)
         let rightTiltZ = simd_quatf(angle: 0.28, axis: SIMD3<Float>(0, 0, 1))
         let rightTiltX = simd_quatf(angle: 0.42, axis: SIMD3<Float>(1, 0, 0))
         rightPillar.orientation = simd_mul(rightTiltZ, rightTiltX)
         interior.addChild(rightPillar)
 
-        // Upper canopy header bow
-        let headerMesh = MeshResource.generateBox(size: SIMD3<Float>(1.18, 0.04, 0.05), cornerRadius: 0.01)
+        let headerMesh = MeshResource.generateBox(size: SIMD3<Float>(pillarSpread * 1.85, 0.04, 0.05), cornerRadius: 0.01)
         let header = ModelEntity(mesh: headerMesh, materials: [strutMat])
         header.position = SIMD3<Float>(0.0, 0.46, -0.88)
         interior.addChild(header)
@@ -182,7 +213,6 @@ enum ShipEntityBuilder {
         return interior
     }
 
-    /// Builds a sharp, faceted wedge-delta hull mesh with per-face flat normals.
     private static func makeDeltaHullMesh() -> MeshResource? {
         let nose = SIMD3<Float>(0.0, 0.0, -3.6)
         let topSpineFwd = SIMD3<Float>(0.0, 0.38, -1.4)
@@ -195,22 +225,18 @@ enum ShipEntityBuilder {
         let rightRear = SIMD3<Float>(1.35, 0.12, 2.7)
 
         let rawTriangles: [(SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)] = [
-            // Upper forward nose facets
             (nose, leftWingTip, topSpineFwd),
             (nose, topSpineFwd, rightWingTip),
-            // Upper main delta wings
             (topSpineFwd, leftWingTip, leftRear),
             (topSpineFwd, leftRear, topSpineAft),
             (topSpineFwd, topSpineAft, rightRear),
             (topSpineFwd, rightRear, rightWingTip),
-            // Lower belly facets
             (nose, bellyFwd, leftWingTip),
             (nose, rightWingTip, bellyFwd),
             (bellyFwd, bellyAft, leftWingTip),
             (bellyAft, leftRear, leftWingTip),
             (bellyFwd, rightWingTip, bellyAft),
             (bellyAft, rightWingTip, rightRear),
-            // Rear transom
             (topSpineAft, leftRear, bellyAft),
             (topSpineAft, bellyAft, rightRear),
         ]
@@ -226,7 +252,6 @@ enum ShipEntityBuilder {
             let base = UInt32(positions.count)
             positions.append(contentsOf: [a, b, c])
             normals.append(contentsOf: [n, n, n])
-            // Both windings so no facet ever culls
             indices.append(contentsOf: [base, base + 1, base + 2, base, base + 2, base + 1])
         }
 

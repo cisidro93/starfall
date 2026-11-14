@@ -2,8 +2,9 @@ import SwiftUI
 import StarfallGalaxy
 
 enum StarportServiceTab: String, CaseIterable, Identifiable {
-    case commodities = "COMMODITIES MARKET"
+    case commodities = "COMMODITIES"
     case missions = "MISSION BOARD"
+    case shipyard = "SHIPYARD"
     case outfitting = "OUTFITTING"
 
     var id: String { rawValue }
@@ -12,6 +13,7 @@ enum StarportServiceTab: String, CaseIterable, Identifiable {
 struct StarportServicesView: View {
     @ObservedObject var commander: CommanderProfile
     @ObservedObject var navManager: NavigationWaypointManager
+    let onShipChanged: (ShipHullCatalogItem) -> Void
     let onRepairAndRefuel: () -> Void
     let onLaunchShip: () -> Void
 
@@ -32,6 +34,7 @@ struct StarportServicesView: View {
                     stationName: navManager.primaryStationName,
                     systemName: navManager.currentSystem.name,
                     economyName: navManager.primaryEconomy.rawValue,
+                    securityText: navManager.primarySecurityText,
                     credits: commander.data.credits,
                     selectedTab: $selectedTab,
                     onLaunchShip: onLaunchShip
@@ -48,7 +51,8 @@ struct StarportServicesView: View {
                     StarportRightMainPane(
                         selectedTab: selectedTab,
                         commander: commander,
-                        listings: marketItems
+                        listings: marketItems,
+                        onShipChanged: onShipChanged
                     )
                 }
             }
@@ -61,12 +65,13 @@ private struct StarportHeaderBar: View {
     let stationName: String
     let systemName: String
     let economyName: String
+    let securityText: String
     let credits: Int
     @Binding var selectedTab: StarportServiceTab
     let onLaunchShip: () -> Void
 
     private var subText: String {
-        "\(systemName.uppercased()) SYSTEM • \(economyName.uppercased()) ECONOMY • LANDING PAD 04"
+        "\(systemName.uppercased()) (\(securityText)) • \(economyName.uppercased()) ECONOMY"
     }
 
     private var creditsText: String {
@@ -74,10 +79,10 @@ private struct StarportHeaderBar: View {
     }
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("STARPORT SERVICES — \(stationName.uppercased())")
-                    .font(.system(size: 18, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 17, weight: .heavy, design: .monospaced))
                     .foregroundStyle(.orange)
                 Text(subText)
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
@@ -86,7 +91,7 @@ private struct StarportHeaderBar: View {
 
             Spacer()
 
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 ForEach(StarportServiceTab.allCases) { tab in
                     StarportTabButton(
                         title: tab.rawValue,
@@ -103,9 +108,9 @@ private struct StarportHeaderBar: View {
                 .foregroundStyle(.yellow)
 
             Button(action: onLaunchShip) {
-                Text("LAUNCH SHIP")
+                Text("LAUNCH")
                     .font(.system(size: 14, weight: .heavy, design: .monospaced))
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, 12)
                     .padding(.vertical, 9)
                     .background(Color.orange.opacity(0.30))
                     .foregroundStyle(.orange)
@@ -143,7 +148,7 @@ private struct StarportTabButton: View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 14, weight: .bold, design: .monospaced))
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .background(bgColor)
                 .foregroundStyle(fgColor)
@@ -177,18 +182,24 @@ private struct StarportLeftHangarColumn: View {
         String(format: "%.1f LY", commander.jumpRangeLY)
     }
 
+    private var tractorRangeText: String {
+        String(format: "%.0f m", commander.tractorRangeMetres)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("COMMANDER STATUS")
+        VStack(alignment: .leading, spacing: 8) {
+            Text("COMMANDER & ACTIVE HULL")
                 .font(.system(size: 15, weight: .heavy, design: .monospaced))
                 .foregroundStyle(.orange)
 
             CommanderStatLine(label: "PILOT", value: commander.data.commanderName, color: .cyan)
+            CommanderStatLine(label: "ACTIVE SHIP", value: commander.activeHull.name, color: .orange)
             CommanderStatLine(label: "BALANCE", value: "\(commander.data.credits) CR", color: .yellow)
             CommanderStatLine(label: "COMBAT RANK", value: commander.combatRankTitle, color: .orange)
             CommanderStatLine(label: "TRADE RANK", value: commander.tradeRankTitle, color: .mint)
             CommanderStatLine(label: "EXPLORER", value: commander.explorerRankTitle, color: .cyan)
             CommanderStatLine(label: "CARGO HOLD", value: cargoStatusText, color: .white)
+            CommanderStatLine(label: "TRACTOR BEAM", value: tractorRangeText, color: .mint)
             CommanderStatLine(label: "FSD RANGE", value: jumpRangeText, color: .cyan)
 
             Divider()
@@ -274,6 +285,7 @@ private struct StarportRightMainPane: View {
     let selectedTab: StarportServiceTab
     @ObservedObject var commander: CommanderProfile
     let listings: [StationMarketListing]
+    let onShipChanged: (ShipHullCatalogItem) -> Void
 
     var body: some View {
         ZStack {
@@ -287,6 +299,8 @@ private struct StarportRightMainPane: View {
                 CommoditiesMarketPane(commander: commander, listings: listings)
             case .missions:
                 MissionBoardPane(commander: commander)
+            case .shipyard:
+                ShipyardCatalogPane(commander: commander, onShipChanged: onShipChanged)
             case .outfitting:
                 OutfittingWorkshopPane(commander: commander)
             }
@@ -301,7 +315,7 @@ private struct CommoditiesMarketPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("COMMODITIES EXCHANGE • BUY LOW AT PRODUCERS, SELL HIGH AT CONSUMERS")
+            Text("COMMODITIES EXCHANGE • SELL MINED ORE, SALVAGE CORES & TRADE GOODS")
                 .font(.system(size: 14, weight: .bold, design: .monospaced))
                 .foregroundStyle(.orange)
 
@@ -330,7 +344,7 @@ private struct CommodityRowView: View {
 
     private var tagColor: Color {
         if listing.supplyTag.contains("CHEAP") { return .green }
-        if listing.supplyTag.contains("PROFIT") { return .cyan }
+        if listing.supplyTag.contains("HIGH") { return .cyan }
         return .secondary
     }
 
@@ -349,16 +363,19 @@ private struct CommodityRowView: View {
                     .font(.system(size: 15, weight: .bold, design: .monospaced))
                     .foregroundStyle(.white)
                 Text("\(listing.commodity.category) • \(listing.supplyTag)")
-                    .font(.system(size: 14, weight: .medium, design: .monospaced))
+                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
                     .foregroundStyle(tagColor)
+                Text(listing.commodity.exportHintText)
+                    .font(.system(size: 14, weight: .regular, design: .monospaced))
+                    .foregroundStyle(.secondary)
             }
 
             Spacer()
 
-            Text("IN HOLD: \(inHold) T")
+            Text("HOLD: \(inHold) T")
                 .font(.system(size: 14, weight: .bold, design: .monospaced))
                 .foregroundStyle(.cyan)
-                .frame(width: 110, alignment: .trailing)
+                .frame(width: 95, alignment: .trailing)
 
             Button(action: onBuy) {
                 Text("BUY \(listing.buyPriceCR) CR")
@@ -387,12 +404,113 @@ private struct CommodityRowView: View {
     }
 }
 
+private struct ShipyardCatalogPane: View {
+    @ObservedObject var commander: CommanderProfile
+    let onShipChanged: (ShipHullCatalogItem) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("STARPORT SHIPYARD — 5 SPECIALIZED HULLS (OWNED SHIPS STORED IN HANGAR)")
+                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                .foregroundStyle(.orange)
+
+            ScrollView {
+                VStack(spacing: 10) {
+                    ForEach(CommanderProfile.shipyardCatalog) { hull in
+                        ShipyardHullCardView(
+                            hull: hull,
+                            isActive: commander.activeHull.id == hull.id,
+                            isOwned: commander.isHullOwned(hull.id),
+                            onSelect: {
+                                if commander.buyOrActivateShip(hull) {
+                                    onShipChanged(hull)
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+        .padding(14)
+    }
+}
+
+private struct ShipyardHullCardView: View {
+    let hull: ShipHullCatalogItem
+    let isActive: Bool
+    let isOwned: Bool
+    let onSelect: () -> Void
+
+    private var specsLine: String {
+        let spd = Int(hull.flightSpec.maxSpeed)
+        let bst = Int(hull.flightSpec.boostSpeed)
+        let shd = Int(hull.baseShieldHP)
+        let trc = Int(hull.tractorRangeMetres)
+        return "SPEED \(spd)/\(bst) m/s • SHIELD \(shd) • CARGO \(hull.cargoCapacity)T • TRACTOR \(trc)m • MINING \(hull.miningYieldBonus)x"
+    }
+
+    private var btnTitle: String {
+        if isActive { return "ACTIVE SHIP" }
+        if isOwned { return "BOARD SHIP" }
+        return "BUY (\(hull.priceCR) CR)"
+    }
+
+    private var btnBgColor: Color {
+        if isActive { return Color.cyan.opacity(0.24) }
+        if isOwned { return Color.green.opacity(0.26) }
+        return Color.orange.opacity(0.26)
+    }
+
+    private var btnFgColor: Color {
+        if isActive { return .cyan }
+        if isOwned { return .green }
+        return .orange
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(hull.name.uppercased())
+                        .font(.system(size: 16, weight: .heavy, design: .monospaced))
+                        .foregroundStyle(.white)
+                    Text(hull.roleTitle.uppercased())
+                        .font(.system(size: 14, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.cyan)
+                }
+                Text(hull.summary)
+                    .font(.system(size: 14, weight: .regular, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Text(specsLine)
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.orange)
+            }
+
+            Spacer()
+
+            Button(action: onSelect) {
+                Text(btnTitle)
+                    .font(.system(size: 14, weight: .heavy, design: .monospaced))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .background(btnBgColor)
+                    .foregroundStyle(btnFgColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .disabled(isActive)
+        }
+        .padding(12)
+        .background(Color.white.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
 private struct MissionBoardPane: View {
     @ObservedObject var commander: CommanderProfile
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("OPERATIONS & SOLO BOUNTY CONTRACTS")
+            Text("OPERATIONS BOARD — BOUNTY, ASTEROID MINING & SALVAGE CONTRACTS")
                 .font(.system(size: 15, weight: .bold, design: .monospaced))
                 .foregroundStyle(.orange)
 
@@ -413,7 +531,7 @@ private struct MissionContractCardView: View {
     let onClaim: () -> Void
 
     private var progressText: String {
-        "PROGRESS: \(mission.currentKills) / \(mission.requiredKills) KILLS • REWARD: \(mission.rewardCR) CR"
+        "\(mission.kind.rawValue) • PROGRESS: \(mission.currentKills) / \(mission.requiredKills) • REWARD: \(mission.rewardCR) CR"
     }
 
     private var btnColor: Color {
@@ -458,9 +576,13 @@ private struct MissionContractCardView: View {
 private struct OutfittingWorkshopPane: View {
     @ObservedObject var commander: CommanderProfile
 
+    private var headerText: String {
+        "SHIP OUTFITTING WORKSHOP — \(commander.activeHull.name.uppercased())"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("SHIP OUTFITTING WORKSHOP — SF-1V KESTREL")
+            Text(headerText)
                 .font(.system(size: 15, weight: .bold, design: .monospaced))
                 .foregroundStyle(.orange)
 

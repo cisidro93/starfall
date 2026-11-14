@@ -11,10 +11,17 @@ enum SolSceneBuilder {
     struct BuiltSolEnvironment {
         let stationEntity: Entity
         let rotatingWheelEntity: Entity
+        let sunCoreEntity: ModelEntity
+        let sunInnerGlowEntity: ModelEntity
+        let sunOuterGlowEntity: ModelEntity
+        let sunLightEntity: Entity
+        let primaryPlanetModelEntity: ModelEntity
+        let primaryPlanetAtmoEntity: ModelEntity
+        let primaryPlanetRingEntity: ModelEntity
         let planetaryEntities: [Entity]
         let dustParticles: [Entity]
         let dustOffsets: [SIMD3<Float>]
-        let stationName: String
+        var stationName: String
         let stationWorldPosition: SIMD3<Double>
         let earthWorldPosition: SIMD3<Double>
         let earthRadiusMetres: Double
@@ -33,24 +40,20 @@ enum SolSceneBuilder {
 
         let stationTitle = gagarinStation?.name ?? "Gagarin Gateway"
 
-        // True radii in metres from StarfallGalaxy
         let earthRadiusM = earthBody.radiusKm * 1_000.0
         let moonRadiusM = moonBody.radiusKm * 1_000.0
         let sunRadiusM = solStar.radiusSolar * 696_340_000.0
 
-        // Player spawns at (0, 0, 0) in high orbit above Earth (~9,100 km above surface, 15,500 km from Earth's centre)
         let earthDir = simd_normalize(SIMD3<Double>(-0.48, -0.16, -0.86))
         let earthWorldPos = earthDir * (earthRadiusM + 9_100_000.0)
 
-        // Moon at true 384,400 km from Earth
         let moonDir = simd_normalize(SIMD3<Double>(0.52, 0.22, -0.82))
         let moonWorldPos = earthWorldPos + moonDir * (moonBody.semiMajorAxisKm * 1_000.0)
 
-        // Sun at true 1.0 AU (149.6M km) in upper-right forward quadrant
         let sunDir = simd_normalize(SIMD3<Double>(0.74, 0.32, -0.59))
         let sunWorldPos = sunDir * (earthBody.semiMajorAxisKm * 1_000.0)
 
-        // 1. Directional sunlight aligned with the Sun's true direction
+        // 1. Directional sunlight aligned with the Star's true direction
         let sunLightEntity = Entity()
         sunLightEntity.name = "SolDirectionalLight"
         let dirLight = DirectionalLightComponent(
@@ -65,7 +68,6 @@ enum SolSceneBuilder {
         )
         root.addChild(sunLightEntity)
 
-        // Subtle fill light from Earth's day-side albedo glow so shadow sides have rich contrast
         let earthshineLight = Entity()
         earthshineLight.name = "EarthshineFillLight"
         let fillLight = DirectionalLightComponent(
@@ -83,11 +85,11 @@ enum SolSceneBuilder {
         // 2. Build Sun, Earth, and Moon planetary proxy entities
         var planetaryEntities: [Entity] = []
 
-        let sunEntity = makeSunEntity(worldPosition: sunWorldPos, trueRadiusMetres: sunRadiusM)
+        let (sunEntity, sunCore, sunInner, sunOuter) = makeSunEntity(worldPosition: sunWorldPos, trueRadiusMetres: sunRadiusM)
         root.addChild(sunEntity)
         planetaryEntities.append(sunEntity)
 
-        let earthEntity = makeEarthEntity(worldPosition: earthWorldPos, trueRadiusMetres: earthRadiusM)
+        let (earthEntity, earthGlobe, earthAtmo, earthRing) = makeEarthEntity(worldPosition: earthWorldPos, trueRadiusMetres: earthRadiusM)
         root.addChild(earthEntity)
         planetaryEntities.append(earthEntity)
 
@@ -107,11 +109,18 @@ enum SolSceneBuilder {
         makeApproachBuoys(into: root, stationWorldPos: stationWorldPos)
 
         // 5. Build space-dust speed reference particles around player
-        let (dustEntities, dustOffsets) = makeSpaceDustPool(into: root, count: 75,seed: galaxy.seed)
+        let (dustEntities, dustOffsets) = makeSpaceDustPool(into: root, count: 75, seed: galaxy.seed)
 
         return BuiltSolEnvironment(
             stationEntity: stationEntity,
             rotatingWheelEntity: rotatingWheel,
+            sunCoreEntity: sunCore,
+            sunInnerGlowEntity: sunInner,
+            sunOuterGlowEntity: sunOuter,
+            sunLightEntity: sunLightEntity,
+            primaryPlanetModelEntity: earthGlobe,
+            primaryPlanetAtmoEntity: earthAtmo,
+            primaryPlanetRingEntity: earthRing,
             planetaryEntities: planetaryEntities,
             dustParticles: dustEntities,
             dustOffsets: dustOffsets,
@@ -124,9 +133,110 @@ enum SolSceneBuilder {
         )
     }
 
+    /// Dynamically re-themes the 3D star, sunlight, planet, and procedural planetary rings when jumping to a new star system!
+    static func applySystemVisuals(to env: inout BuiltSolEnvironment, system: StarSystem) {
+        let star = system.stars.first!
+        let stnName = system.settlement?.stations.first?.name ?? "\(system.name) Gateway"
+        env.stationName = stnName
+
+        let coreColor: UIColor
+        let innerColor: UIColor
+        let outerColor: UIColor
+        let lightColor: UIColor
+
+        switch star.stellarClass {
+        case .O, .B, .A, .whiteDwarf, .neutron:
+            // Brilliant Blue-White Star (e.g., Sirius)
+            coreColor = UIColor(red: 0.85, green: 0.94, blue: 1.00, alpha: 1.0)
+            innerColor = UIColor(red: 0.38, green: 0.78, blue: 1.00, alpha: 1.0)
+            outerColor = UIColor(red: 0.18, green: 0.52, blue: 1.00, alpha: 1.0)
+            lightColor = UIColor(red: 0.86, green: 0.94, blue: 1.00, alpha: 1.0)
+        case .F, .G:
+            // Golden-White Solar Star (e.g., Sol, Alpha Centauri A, Tau Ceti)
+            coreColor = UIColor(red: 1.00, green: 0.96, blue: 0.82, alpha: 1.0)
+            innerColor = UIColor(red: 1.00, green: 0.80, blue: 0.35, alpha: 1.0)
+            outerColor = UIColor(red: 1.00, green: 0.58, blue: 0.16, alpha: 1.0)
+            lightColor = UIColor(red: 1.00, green: 0.96, blue: 0.88, alpha: 1.0)
+        case .K:
+            // Warm Amber-Orange Star (e.g., Epsilon Eridani, Alpha Centauri B)
+            coreColor = UIColor(red: 1.00, green: 0.78, blue: 0.45, alpha: 1.0)
+            innerColor = UIColor(red: 1.00, green: 0.52, blue: 0.18, alpha: 1.0)
+            outerColor = UIColor(red: 0.90, green: 0.30, blue: 0.10, alpha: 1.0)
+            lightColor = UIColor(red: 1.00, green: 0.82, blue: 0.62, alpha: 1.0)
+        case .M:
+            // Deep Crimson Red Dwarf (e.g., Barnard's Star, Proxima, Wolf 359)
+            coreColor = UIColor(red: 1.00, green: 0.46, blue: 0.32, alpha: 1.0)
+            innerColor = UIColor(red: 0.98, green: 0.24, blue: 0.16, alpha: 1.0)
+            outerColor = UIColor(red: 0.78, green: 0.10, blue: 0.10, alpha: 1.0)
+            lightColor = UIColor(red: 1.00, green: 0.68, blue: 0.58, alpha: 1.0)
+        }
+
+        env.sunCoreEntity.model?.materials = [UnlitMaterial(color: coreColor)]
+        var inMat = UnlitMaterial(color: innerColor)
+        inMat.blending = .transparent(opacity: .init(floatLiteral: 0.42))
+        env.sunInnerGlowEntity.model?.materials = [inMat]
+
+        var outMat = UnlitMaterial(color: outerColor)
+        outMat.blending = .transparent(opacity: .init(floatLiteral: 0.18))
+        env.sunOuterGlowEntity.model?.materials = [outMat]
+
+        env.sunLightEntity.components.set(
+            DirectionalLightComponent(color: lightColor, intensity: 3_200)
+        )
+
+        // Update Primary Planet & Procedural Planetary Ring System
+        let isSol = system.name == "Sol"
+        var planetMat = SimpleMaterial()
+        var atmoColor = UIColor(red: 0.32, green: 0.72, blue: 1.0, alpha: 1.0)
+
+        if isSol, let tex = makeProceduralEarthTexture(width: 256, height: 128) {
+            planetMat.color = .init(tint: .white, texture: .init(tex))
+            env.primaryPlanetRingEntity.isEnabled = false
+        } else {
+            let seed = Int(system.id.rawValue % 5)
+            switch seed {
+            case 0:
+                // Ringed Azure Ice Giant
+                planetMat.color = .init(tint: UIColor(red: 0.22, green: 0.62, blue: 0.88, alpha: 1.0))
+                atmoColor = UIColor(red: 0.40, green: 0.88, blue: 1.0, alpha: 1.0)
+                env.primaryPlanetRingEntity.isEnabled = true
+            case 1:
+                // Crimson Volcanic / Lava World
+                planetMat.color = .init(tint: UIColor(red: 0.68, green: 0.22, blue: 0.14, alpha: 1.0))
+                atmoColor = UIColor(red: 1.0, green: 0.42, blue: 0.18, alpha: 1.0)
+                env.primaryPlanetRingEntity.isEnabled = false
+            case 2:
+                // Ringed Amber Gas Giant
+                planetMat.color = .init(tint: UIColor(red: 0.82, green: 0.58, blue: 0.32, alpha: 1.0))
+                atmoColor = UIColor(red: 1.0, green: 0.78, blue: 0.42, alpha: 1.0)
+                env.primaryPlanetRingEntity.isEnabled = true
+            case 3:
+                // Emerald Frontier Super-Earth
+                planetMat.color = .init(tint: UIColor(red: 0.14, green: 0.54, blue: 0.44, alpha: 1.0))
+                atmoColor = UIColor(red: 0.25, green: 0.92, blue: 0.72, alpha: 1.0)
+                env.primaryPlanetRingEntity.isEnabled = true
+            default:
+                // Deep Cobalt Ocean World
+                planetMat.color = .init(tint: UIColor(red: 0.16, green: 0.36, blue: 0.76, alpha: 1.0))
+                atmoColor = UIColor(red: 0.35, green: 0.68, blue: 1.0, alpha: 1.0)
+                env.primaryPlanetRingEntity.isEnabled = false
+            }
+        }
+        planetMat.roughness = .init(floatLiteral: 0.65)
+        planetMat.metallic = .init(floatLiteral: 0.08)
+        env.primaryPlanetModelEntity.model?.materials = [planetMat]
+
+        var atmoMat = UnlitMaterial(color: atmoColor)
+        atmoMat.blending = .transparent(opacity: .init(floatLiteral: 0.20))
+        env.primaryPlanetAtmoEntity.model?.materials = [atmoMat]
+    }
+
     // MARK: - Sun, Earth & Moon
 
-    private static func makeSunEntity(worldPosition: SIMD3<Double>, trueRadiusMetres: Double) -> Entity {
+    private static func makeSunEntity(
+        worldPosition: SIMD3<Double>,
+        trueRadiusMetres: Double
+    ) -> (Entity, ModelEntity, ModelEntity, ModelEntity) {
         let container = Entity()
         container.name = "PlanetProxy_Sun"
         container.components.set(
@@ -138,13 +248,11 @@ enum SolSceneBuilder {
             )
         )
 
-        // Unit-radius sphere scaled dynamically by PlanetaryBodyComponent
         let coreMesh = MeshResource.generateSphere(radius: 1.0)
         let coreMat = UnlitMaterial(color: UIColor(red: 1.0, green: 0.96, blue: 0.82, alpha: 1.0))
         let core = ModelEntity(mesh: coreMesh, materials: [coreMat])
         container.addChild(core)
 
-        // Corona glow shells
         let innerGlowMesh = MeshResource.generateSphere(radius: 1.65)
         var innerGlowMat = UnlitMaterial(color: UIColor(red: 1.0, green: 0.80, blue: 0.35, alpha: 1.0))
         innerGlowMat.blending = .transparent(opacity: .init(floatLiteral: 0.38))
@@ -157,10 +265,13 @@ enum SolSceneBuilder {
         let outerGlow = ModelEntity(mesh: outerGlowMesh, materials: [outerGlowMat])
         container.addChild(outerGlow)
 
-        return container
+        return (container, core, innerGlow, outerGlow)
     }
 
-    private static func makeEarthEntity(worldPosition: SIMD3<Double>, trueRadiusMetres: Double) -> Entity {
+    private static func makeEarthEntity(
+        worldPosition: SIMD3<Double>,
+        trueRadiusMetres: Double
+    ) -> (Entity, ModelEntity, ModelEntity, ModelEntity) {
         let container = Entity()
         container.name = "PlanetProxy_Earth"
         container.components.set(
@@ -183,18 +294,25 @@ enum SolSceneBuilder {
         earthMaterial.metallic = .init(floatLiteral: 0.08)
 
         let globe = ModelEntity(mesh: sphereMesh, materials: [earthMaterial])
-        // Tilt Earth's axial obliquity (23.4°)
         globe.orientation = simd_quatf(angle: 0.41, axis: simd_normalize(SIMD3<Float>(0.2, 1.0, 0.3)))
         container.addChild(globe)
 
-        // Translucent cyan atmosphere rim shell
         let atmoMesh = MeshResource.generateSphere(radius: 1.032)
         var atmoMat = UnlitMaterial(color: UIColor(red: 0.32, green: 0.72, blue: 1.0, alpha: 1.0))
         atmoMat.blending = .transparent(opacity: .init(floatLiteral: 0.18))
         let atmo = ModelEntity(mesh: atmoMesh, materials: [atmoMat])
         container.addChild(atmo)
 
-        return container
+        // Procedural 3D Planetary Ring disc (enabled when jumping to ringed star systems)
+        let ringMesh = MeshResource.generateBox(size: SIMD3<Float>(3.6, 0.015, 3.6), cornerRadius: 1.75)
+        var ringMat = UnlitMaterial(color: UIColor(red: 0.88, green: 0.76, blue: 0.56, alpha: 1.0))
+        ringMat.blending = .transparent(opacity: .init(floatLiteral: 0.36))
+        let ringEntity = ModelEntity(mesh: ringMesh, materials: [ringMat])
+        ringEntity.orientation = simd_quatf(angle: 0.38, axis: simd_normalize(SIMD3<Float>(1.0, 0.2, 0.4)))
+        ringEntity.isEnabled = false
+        container.addChild(ringEntity)
+
+        return (container, globe, atmo, ringEntity)
     }
 
     private static func makeMoonEntity(worldPosition: SIMD3<Double>, trueRadiusMetres: Double) -> Entity {
@@ -255,12 +373,10 @@ enum SolSceneBuilder {
         let greenNav = UnlitMaterial(color: UIColor(red: 0.20, green: 0.95, blue: 0.45, alpha: 1.0))
         let redNav = UnlitMaterial(color: UIColor(red: 1.00, green: 0.25, blue: 0.25, alpha: 1.0))
 
-        // Central docking core cylinder (aligned along Z axis so docking slot faces +Z toward player)
         let coreBodyMesh = MeshResource.generateBox(size: SIMD3<Float>(54.0, 54.0, 96.0), cornerRadius: 12.0)
         let coreBody = ModelEntity(mesh: coreBodyMesh, materials: [darkArmor])
         rotatingWheel.addChild(coreBody)
 
-        // Glowing "Mail-Slot" docking bay entrance on the +Z face of the central hub
         let slotFrameMesh = MeshResource.generateBox(size: SIMD3<Float>(28.0, 10.0, 2.5), cornerRadius: 1.0)
         let slotFrame = ModelEntity(mesh: slotFrameMesh, materials: [goldAccent])
         slotFrame.position = SIMD3<Float>(0.0, 0.0, 48.0)
@@ -271,7 +387,6 @@ enum SolSceneBuilder {
         slotInterior.position = SIMD3<Float>(0.0, 0.0, 48.2)
         rotatingWheel.addChild(slotInterior)
 
-        // Port (red) and Starboard (green) docking slot guide lights
         let beaconMesh = MeshResource.generateSphere(radius: 1.4)
         let leftBeacon = ModelEntity(mesh: beaconMesh, materials: [redNav])
         leftBeacon.position = SIMD3<Float>(-16.5, 0.0, 49.0)
@@ -281,7 +396,6 @@ enum SolSceneBuilder {
         rightBeacon.position = SIMD3<Float>(16.5, 0.0, 49.0)
         rotatingWheel.addChild(rightBeacon)
 
-        // 4 radial structural spokes connecting the docking hub to the 160m-radius habitat ring
         let ringRadius: Float = 155.0
         let spokeLength: Float = ringRadius * 2.0 - 16.0
         let spokeMesh = MeshResource.generateBox(size: SIMD3<Float>(8.0, spokeLength, 10.0), cornerRadius: 1.5)
@@ -292,7 +406,6 @@ enum SolSceneBuilder {
             rotatingWheel.addChild(spoke)
         }
 
-        // 16-segment outer rotating habitat ring + lit interior window band
         let segmentCount = 16
         let chordLength = 2.0 * ringRadius * sin(.pi / Float(segmentCount)) * 1.06
         let segMesh = MeshResource.generateBox(size: SIMD3<Float>(chordLength, 22.0, 34.0), cornerRadius: 3.5)
@@ -309,7 +422,6 @@ enum SolSceneBuilder {
             seg.orientation = simd_quatf(angle: theta + .pi * 0.5, axis: SIMD3<Float>(0, 0, 1))
             rotatingWheel.addChild(seg)
 
-            // Lit inward-facing habitat windows
             let winR = ringRadius - 11.2
             let win = ModelEntity(mesh: winMesh, materials: [windowGlow])
             win.position = SIMD3<Float>(cos(theta) * winR, sin(theta) * winR, 0.0)
@@ -331,7 +443,6 @@ enum SolSceneBuilder {
         let buoyMat = UnlitMaterial(color: UIColor(red: 0.18, green: 0.90, blue: 0.75, alpha: 1.0))
         let buoyMesh = MeshResource.generateSphere(radius: 1.1)
 
-        // 5 pairs of approach corridor buoys between z = -220m and z = -740m
         for idx in 0..<5 {
             let zWorld = -220.0 - Double(idx) * 130.0
             for side in [-1.0, 1.0] {
@@ -381,14 +492,12 @@ enum SolSceneBuilder {
         return (entities, offsets)
     }
 
-    // MARK: - Procedural Earth Texture
-
     private static func makeProceduralEarthTexture(width: Int, height: Int) -> TextureResource? {
         var pixels = [UInt8](repeating: 255, count: width * height * 4)
 
         for py in 0..<height {
             let v = Double(py) / Double(height - 1)
-            let lat = (0.5 - v) * .pi // +pi/2 north pole to -pi/2 south pole
+            let lat = (0.5 - v) * .pi
             let cosLat = cos(lat)
             let sinLat = sin(lat)
             let absLat = abs(lat)
@@ -401,13 +510,11 @@ enum SolSceneBuilder {
                 let ny = sinLat
                 let nz = cosLat * sin(lon)
 
-                // Multi-frequency trigonometric continent approximation (deterministic & fast)
                 let n1 = sin(nx * 2.6 + 0.4) * cos(ny * 2.9 - 0.3) + cos(nz * 2.4 + 1.1)
                 let n2 = 0.5 * sin(nx * 6.2 - nz * 4.8) * cos(ny * 5.5 + 0.7)
                 let n3 = 0.25 * cos(nx * 13.0 + ny * 11.0 - nz * 9.0)
                 let elevation = (n1 + n2 + n3) * 0.45
 
-                // Cloud swirl layer
                 let cloudWave = sin(lon * 5.0 + sin(lat * 4.0) * 1.6) * cos(lat * 6.5 + cos(lon * 3.0))
                 let cloud = max(0.0, cloudWave - 0.28) * 0.85
 
@@ -416,23 +523,19 @@ enum SolSceneBuilder {
                 var b: Double
 
                 if absLat > 1.25 - elevation * 0.12 {
-                    // Polar ice caps
                     r = 0.90; g = 0.94; b = 0.98
                 } else if elevation > 0.12 {
-                    // Continents: coastal emerald green blending to arid ochre/mountain highlands
                     let h = min(1.0, (elevation - 0.12) / 0.65)
                     r = 0.16 + 0.42 * h
                     g = 0.42 + 0.14 * (1.0 - abs(h - 0.4))
                     b = 0.14 + 0.08 * h
                 } else {
-                    // Deep ocean to shallow continental shelf
                     let shelf = max(0.0, (elevation + 0.25) / 0.37)
                     r = 0.04 + 0.06 * shelf
                     g = 0.16 + 0.24 * shelf
                     b = 0.44 + 0.28 * shelf
                 }
 
-                // Blend atmospheric clouds over surface
                 r = min(1.0, r * (1.0 - cloud) + 0.96 * cloud)
                 g = min(1.0, g * (1.0 - cloud) + 0.98 * cloud)
                 b = min(1.0, b * (1.0 - cloud) + 1.00 * cloud)

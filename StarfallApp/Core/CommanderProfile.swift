@@ -1,6 +1,22 @@
 import Foundation
 import StarfallGalaxy
 
+struct ShipHullCatalogItem: Identifiable, Sendable {
+    let id: String
+    let name: String
+    let roleTitle: String
+    let summary: String
+    let priceCR: Int
+    let cargoCapacity: Int
+    let baseShieldHP: Float
+    let baseHullHP: Float
+    let tractorRangeMetres: Double
+    let miningYieldBonus: Int
+    let jumpRangeBonusLY: Double
+    let weaponDamageMultiplier: Float
+    let flightSpec: ShipSpec
+}
+
 struct CommodityItem: Identifiable, Sendable {
     let id: String
     let name: String
@@ -8,6 +24,10 @@ struct CommodityItem: Identifiable, Sendable {
     let basePriceCR: Int
     let producedBy: Economy
     let consumedBy: Economy
+
+    var exportHintText: String {
+        "PRODUCED BY \(producedBy.rawValue.uppercased()) → EXPORT TO \(consumedBy.rawValue.uppercased()) (+34%)"
+    }
 }
 
 struct StationMarketListing: Identifiable, Sendable {
@@ -18,6 +38,12 @@ struct StationMarketListing: Identifiable, Sendable {
     let supplyTag: String
 }
 
+enum SoloContractKind: String, Codable, Sendable {
+    case bounty = "BOUNTY SWEEP"
+    case mining = "MINING QUOTA"
+    case salvage = "SALVAGE RECOVERY"
+}
+
 struct SoloContractMission: Identifiable, Codable, Sendable {
     let id: String
     let title: String
@@ -25,6 +51,12 @@ struct SoloContractMission: Identifiable, Codable, Sendable {
     let rewardCR: Int
     let requiredKills: Int
     var currentKills: Int
+    var contractKindRaw: String?
+
+    var kind: SoloContractKind {
+        SoloContractKind(rawValue: contractKindRaw ?? "") ?? .bounty
+    }
+
     var isCompleted: Bool { currentKills >= requiredKills }
 }
 
@@ -36,11 +68,13 @@ struct CommanderSaveData: Codable, Sendable {
     var systemsVisited: Int = 1
     var tradeProfitCR: Int = 0
     var currentSystemRawID: UInt64 = Galaxy().sol.id.rawValue
+    var currentHullID: String? = "sf1v_kestrel"
+    var ownedHullIDs: [String]? = ["sf1v_kestrel"]
     var fuelTons: Float = 16.0
     var maxFuelTons: Float = 16.0
     var cargoCapacity: Int = 20
     var cargoHold: [String: Int] = [:]
-    var fsdGrade: Int = 1        // 1..4 (12 LY, 16 LY, 20 LY, 26 LY)
+    var fsdGrade: Int = 1        // 1..4 (Class D..A)
     var shieldGrade: Int = 1     // 1..4
     var thrusterGrade: Int = 1   // 1..4
     var weaponGrade: Int = 1     // 1..4
@@ -55,6 +89,166 @@ final class CommanderProfile: ObservableObject {
     @Published var statusBannerMessage: String = "SYSTEMS ONLINE • BLUE THROTTLE ZONE = MAX AGILITY"
     @Published var statusBannerTimer: Float = 4.0
 
+    // Live Procedural Radio Comms Ticker
+    @Published var radioSender: String = "FLIGHT CONTROL"
+    @Published var radioMessage: String = "Welcome to orbital space, Commander. Maintain safe speed inside the station perimeter."
+    private var commsTimer: Float = 9.0
+    private var commsIndex: Int = 0
+
+    static let shipyardCatalog: [ShipHullCatalogItem] = [
+        ShipHullCatalogItem(
+            id: "sf1v_kestrel",
+            name: "SF-1V Kestrel",
+            roleTitle: "Light Multi-Role Scout",
+            summary: "Balanced starter delta starfighter with nimble pitch authority and 20T modular cargo bay.",
+            priceCR: 0,
+            cargoCapacity: 20,
+            baseShieldHP: 100.0,
+            baseHullHP: 100.0,
+            tractorRangeMetres: 130.0,
+            miningYieldBonus: 1,
+            jumpRangeBonusLY: 0.0,
+            weaponDamageMultiplier: 1.0,
+            flightSpec: ShipSpec.loadStarterSpec()
+        ),
+        ShipHullCatalogItem(
+            id: "sf2a_viper",
+            name: "SF-2A Viper",
+            roleTitle: "Heavy Combat Interceptor",
+            summary: "High-velocity bounty-hunting interceptor with twin overcharged hardpoints (+30% DPS) and 305 m/s cruise speed.",
+            priceCR: 65_000,
+            cargoCapacity: 18,
+            baseShieldHP: 140.0,
+            baseHullHP: 125.0,
+            tractorRangeMetres: 145.0,
+            miningYieldBonus: 1,
+            jumpRangeBonusLY: 1.5,
+            weaponDamageMultiplier: 1.30,
+            flightSpec: ShipSpec(
+                id: "sf2a_viper",
+                name: "SF-2A Viper",
+                shipClass: "Heavy Interceptor",
+                maxSpeed: 305.0,
+                reverseMaxSpeed: 150.0,
+                boostSpeed: 495.0,
+                forwardAcceleration: 118.0,
+                reverseAcceleration: 78.0,
+                lateralAcceleration: 84.0,
+                verticalAcceleration: 84.0,
+                pitchRateDeg: 74.0,
+                rollRateDeg: 112.0,
+                yawRateDeg: 66.0,
+                angularResponse: 12.5,
+                linearDampingFA: 6.0,
+                boostDuration: 2.4,
+                boostCooldown: 3.8,
+                boostAcceleration: 255.0
+            )
+        ),
+        ShipHullCatalogItem(
+            id: "sf4c_cobra",
+            name: "SF-4C Cobra Mk IV",
+            roleTitle: "Medium Multi-Role Combat Trader",
+            summary: "Iconic twin-strut frontier cruiser combining 48T cargo capacity, reinforced shields, and +20% weapon output.",
+            priceCR: 145_000,
+            cargoCapacity: 48,
+            baseShieldHP: 180.0,
+            baseHullHP: 175.0,
+            tractorRangeMetres: 170.0,
+            miningYieldBonus: 1,
+            jumpRangeBonusLY: 3.5,
+            weaponDamageMultiplier: 1.20,
+            flightSpec: ShipSpec(
+                id: "sf4c_cobra",
+                name: "SF-4C Cobra Mk IV",
+                shipClass: "Multi-Role Cruiser",
+                maxSpeed: 278.0,
+                reverseMaxSpeed: 135.0,
+                boostSpeed: 460.0,
+                forwardAcceleration: 98.0,
+                reverseAcceleration: 68.0,
+                lateralAcceleration: 70.0,
+                verticalAcceleration: 70.0,
+                pitchRateDeg: 64.0,
+                rollRateDeg: 96.0,
+                yawRateDeg: 60.0,
+                angularResponse: 11.2,
+                linearDampingFA: 5.6,
+                boostDuration: 2.3,
+                boostCooldown: 4.2,
+                boostAcceleration: 230.0
+            )
+        ),
+        ShipHullCatalogItem(
+            id: "sf7t_atlas",
+            name: "SF-7T Atlas Barge",
+            roleTitle: "Industrial Miner & Heavy Freighter",
+            summary: "Dedicated deep-belt mining & trade vessel with 100T cargo hold, 260m magnetic tractor array, and 2x ore extraction yield.",
+            priceCR: 260_000,
+            cargoCapacity: 100,
+            baseShieldHP: 220.0,
+            baseHullHP: 250.0,
+            tractorRangeMetres: 260.0,
+            miningYieldBonus: 2,
+            jumpRangeBonusLY: 4.0,
+            weaponDamageMultiplier: 1.15,
+            flightSpec: ShipSpec(
+                id: "sf7t_atlas",
+                name: "SF-7T Atlas Barge",
+                shipClass: "Industrial Miner & Hauler",
+                maxSpeed: 235.0,
+                reverseMaxSpeed: 115.0,
+                boostSpeed: 395.0,
+                forwardAcceleration: 82.0,
+                reverseAcceleration: 58.0,
+                lateralAcceleration: 62.0,
+                verticalAcceleration: 62.0,
+                pitchRateDeg: 54.0,
+                rollRateDeg: 80.0,
+                yawRateDeg: 52.0,
+                angularResponse: 9.8,
+                linearDampingFA: 5.2,
+                boostDuration: 2.2,
+                boostCooldown: 4.6,
+                boostAcceleration: 195.0
+            )
+        ),
+        ShipHullCatalogItem(
+            id: "sf9x_astrolabe",
+            name: "SF-9X Astrolabe Corvette",
+            roleTitle: "Endgame Deep-Space Flagship",
+            summary: "Pinnacle gold-trimmed command corvette with 320 Shield/Hull, +50% weapon damage, +8 LY jump range, and 85T hold.",
+            priceCR: 550_000,
+            cargoCapacity: 85,
+            baseShieldHP: 320.0,
+            baseHullHP: 300.0,
+            tractorRangeMetres: 240.0,
+            miningYieldBonus: 2,
+            jumpRangeBonusLY: 8.0,
+            weaponDamageMultiplier: 1.50,
+            flightSpec: ShipSpec(
+                id: "sf9x_astrolabe",
+                name: "SF-9X Astrolabe",
+                shipClass: "Command Corvette",
+                maxSpeed: 295.0,
+                reverseMaxSpeed: 145.0,
+                boostSpeed: 485.0,
+                forwardAcceleration: 112.0,
+                reverseAcceleration: 76.0,
+                lateralAcceleration: 78.0,
+                verticalAcceleration: 78.0,
+                pitchRateDeg: 68.0,
+                rollRateDeg: 102.0,
+                yawRateDeg: 64.0,
+                angularResponse: 11.8,
+                linearDampingFA: 5.8,
+                boostDuration: 2.6,
+                boostCooldown: 3.6,
+                boostAcceleration: 250.0
+            )
+        )
+    ]
+
     static let allCommodities: [CommodityItem] = [
         CommodityItem(id: "titanium", name: "Titanium", category: "Metals", basePriceCR: 1_120, producedBy: .refinery, consumedBy: .highTech),
         CommodityItem(id: "superconductors", name: "Superconductors", category: "Materials", basePriceCR: 6_450, producedBy: .refinery, consumedBy: .highTech),
@@ -63,35 +257,56 @@ final class CommanderProfile: ObservableObject {
         CommodityItem(id: "robotics", name: "Autonomous Robotics", category: "Machinery", basePriceCR: 3_150, producedBy: .industrial, consumedBy: .extraction),
         CommodityItem(id: "power_generators", name: "Fusion Generators", category: "Machinery", basePriceCR: 2_600, producedBy: .industrial, consumedBy: .agriculture),
         CommodityItem(id: "agri_medicines", name: "Agri-Biotech Supplies", category: "Foods & Bio", basePriceCR: 1_850, producedBy: .agriculture, consumedBy: .extraction),
-        CommodityItem(id: "painite_ore", name: "Core Crystal Ore", category: "Minerals", basePriceCR: 11_400, producedBy: .extraction, consumedBy: .refinery)
+        CommodityItem(id: "painite_ore", name: "Core Crystal Ore", category: "Minerals (Mined)", basePriceCR: 11_400, producedBy: .extraction, consumedBy: .refinery),
+        CommodityItem(id: "void_opals", name: "Void Opal Crystals", category: "Deep Minerals (Mined)", basePriceCR: 16_800, producedBy: .extraction, consumedBy: .highTech),
+        CommodityItem(id: "salvage_core", name: "Ancient Salvage Core", category: "Recovered Salvage", basePriceCR: 14_200, producedBy: .colony, consumedBy: .highTech)
     ]
 
     init() {
         loadFromDisk()
-        if data.activeMissions.isEmpty {
+        syncHullCapacity()
+        if data.activeMissions.count < 3 {
             seedStarterMissions()
         }
     }
 
+    var activeHull: ShipHullCatalogItem {
+        let id = data.currentHullID ?? "sf1v_kestrel"
+        return Self.shipyardCatalog.first(where: { $0.id == id }) ?? Self.shipyardCatalog[0]
+    }
+
+    func isHullOwned(_ hullID: String) -> Bool {
+        (data.ownedHullIDs ?? ["sf1v_kestrel"]).contains(hullID)
+    }
+
     var jumpRangeLY: Double {
+        let base: Double
         switch data.fsdGrade {
-        case 1: return 12.0
-        case 2: return 16.5
-        case 3: return 21.0
-        default: return 27.5
+        case 1: base = 12.0
+        case 2: base = 16.5
+        case 3: base = 21.0
+        default: base = 27.5
         }
+        return base + activeHull.jumpRangeBonusLY
     }
 
     var shieldBonusMultiplier: Float {
-        1.0 + Float(data.shieldGrade - 1) * 0.25
+        let hullRatio = activeHull.baseShieldHP / 100.0
+        let moduleMult = 1.0 + Float(data.shieldGrade - 1) * 0.25
+        return hullRatio * moduleMult
     }
 
     var weaponBonusMultiplier: Float {
-        1.0 + Float(data.weaponGrade - 1) * 0.22
+        let moduleMult = 1.0 + Float(data.weaponGrade - 1) * 0.25
+        return activeHull.weaponDamageMultiplier * moduleMult
     }
 
     var thrusterBonusMultiplier: Float {
         1.0 + Float(data.thrusterGrade - 1) * 0.10
+    }
+
+    var tractorRangeMetres: Double {
+        activeHull.tractorRangeMetres
     }
 
     var cargoUsedTons: Int {
@@ -139,17 +354,105 @@ final class CommanderProfile: ObservableObject {
         statusBannerTimer = duration
     }
 
-    func recordPirateKill(callsign: String) {
-        let bounty = 12_500
+    func postRadioComms(sender: String, message: String) {
+        radioSender = sender
+        radioMessage = message
+        commsTimer = 11.0
+    }
+
+    func stepCommsTicker(dt: Float, systemName: String, stationName: String, securityText: String) {
+        commsTimer -= dt
+        guard commsTimer <= 0.0 else { return }
+        commsTimer = 14.0
+        commsIndex += 1
+
+        let chatter: [(String, String)] = [
+            ("\(stationName.uppercased()) CONTROL", "Heavy Hauler CSV-Demeter cleared for Approach Lane 04. Maintain 100 m/s inside perimeter."),
+            ("MINING BARGE [BELT ALPHA]", "Cracked a high-purity Void Opal motherlode in the Asteroid Belt—tractor beams at full capacity!"),
+            ("\(systemName.uppercased()) AUTHORITY", "Security status \(securityText). All pilots report rogue drone telemetry immediately."),
+            ("CONVOY ESCORT [NAV BEACON]", "Trade lane to \(stationName) is green. Watch for pirate interceptors near the Forsaken Hulk."),
+            ("DEEP SALVAGE CREW", "Picking up encrypted black-box transponders near the Unidentified Signal Source."),
+            ("TRADER COMM-LINK", "High-Tech systems are paying top credit for Void Opals, Superconductors, and Salvage Cores today.")
+        ]
+        let pick = chatter[commsIndex % chatter.count]
+        radioSender = pick.0
+        radioMessage = pick.1
+    }
+
+    func recordPirateKill(callsign: String, isBoss: Bool = false) {
+        let bounty = isBoss ? 25_000 : 12_500
         data.totalKills += 1
         data.unclaimedBountiesCR += bounty
         for i in data.activeMissions.indices {
-            if data.activeMissions[i].currentKills < data.activeMissions[i].requiredKills {
+            if data.activeMissions[i].kind == .bounty && data.activeMissions[i].currentKills < data.activeMissions[i].requiredKills {
                 data.activeMissions[i].currentKills += 1
             }
         }
-        postBanner("TARGET DESTROYED (\(callsign)) • +\(bounty) CR BOUNTY VOUCHER", duration: 4.0)
+        postBanner("TARGET DESTROYED (\(callsign)) • +\(bounty) CR BOUNTY VOUCHER", duration: 4.2)
+        if isBoss {
+            postRadioComms(sender: "SYSTEM AUTHORITY", message: "Confirmed kill on Wanted Dread-Leader \(callsign)! Bounty voucher logged.")
+        }
         saveToDisk()
+    }
+
+    func collectCanister(commodityID: String, label: String, isMiningOre: Bool) {
+        let yieldTons = isMiningOre ? activeHull.miningYieldBonus : 1
+        let spaceLeft = max(0, data.cargoCapacity - cargoUsedTons)
+        guard spaceLeft > 0 else {
+            postBanner("CARGO HOLD FULL (\(data.cargoCapacity) T) • SELL CARGO AT STARPORT", duration: 3.5)
+            return
+        }
+        let added = min(spaceLeft, yieldTons)
+        data.cargoHold[commodityID, default: 0] += added
+
+        let targetKind: SoloContractKind = isMiningOre ? .mining : .salvage
+        for i in data.activeMissions.indices {
+            if data.activeMissions[i].kind == targetKind && data.activeMissions[i].currentKills < data.activeMissions[i].requiredKills {
+                data.activeMissions[i].currentKills = min(
+                    data.activeMissions[i].requiredKills,
+                    data.activeMissions[i].currentKills + added
+                )
+            }
+        }
+
+        CockpitAudioManager.shared.playTractorScoop()
+        postBanner("TRACTOR SCOOP: +\(added)T \(label.uppercased()) (\(cargoUsedTons)/\(data.cargoCapacity) T)", duration: 3.5)
+        saveToDisk()
+    }
+
+    func buyOrActivateShip(_ hull: ShipHullCatalogItem) -> Bool {
+        var owned = data.ownedHullIDs ?? ["sf1v_kestrel"]
+        if owned.contains(hull.id) {
+            data.currentHullID = hull.id
+            syncHullCapacity()
+            postBanner("SHIPYARD: BOARDED \(hull.name.uppercased())")
+            saveToDisk()
+            return true
+        }
+
+        guard data.credits >= hull.priceCR else {
+            postBanner("INSUFFICIENT CREDITS FOR \(hull.name.uppercased())")
+            return false
+        }
+
+        data.credits -= hull.priceCR
+        owned.append(hull.id)
+        data.ownedHullIDs = owned
+        data.currentHullID = hull.id
+        syncHullCapacity()
+        postBanner("SHIPYARD: PURCHASED & BOARDED \(hull.name.uppercased())!")
+        saveToDisk()
+        return true
+    }
+
+    private func syncHullCapacity() {
+        data.cargoCapacity = activeHull.cargoCapacity
+        if data.ownedHullIDs == nil {
+            data.ownedHullIDs = ["sf1v_kestrel"]
+        }
+        if data.currentHullID == nil {
+            data.currentHullID = "sf1v_kestrel"
+        }
     }
 
     func redeemBounties() -> Int {
@@ -157,6 +460,7 @@ final class CommanderProfile: ObservableObject {
         guard amount > 0 else { return 0 }
         data.credits += amount
         data.unclaimedBountiesCR = 0
+        CockpitAudioManager.shared.playTractorScoop()
         postBanner("AUTHORITY CONTACT: REDEEMED +\(amount) CR IN BOUNTIES")
         saveToDisk()
         return amount
@@ -170,6 +474,7 @@ final class CommanderProfile: ObservableObject {
         if data.activeMissions.count < 3 {
             seedStarterMissions()
         }
+        CockpitAudioManager.shared.playTractorScoop()
         postBanner("MISSION COMPLETE • CREDITED +\(reward) CR")
         saveToDisk()
     }
@@ -183,13 +488,13 @@ final class CommanderProfile: ObservableObject {
 
             if item.producedBy == economy {
                 priceMultiplier = 0.72 * jitterFactor
-                supplyTag = "HIGH SUPPLY (CHEAP)"
+                supplyTag = "HIGH SUPPLY (BUY CHEAP)"
             } else if item.consumedBy == economy {
-                priceMultiplier = 1.34 * jitterFactor
-                supplyTag = "HIGH DEMAND (PROFIT)"
+                priceMultiplier = 1.36 * jitterFactor
+                supplyTag = "HIGH DEMAND (SELL HIGH)"
             } else {
                 priceMultiplier = 1.00 * jitterFactor
-                supplyTag = "BALANCED"
+                supplyTag = "BALANCED MARKET"
             }
 
             let buyPrice = max(100, Int((Double(item.basePriceCR) * priceMultiplier).rounded()))
@@ -228,7 +533,8 @@ final class CommanderProfile: ObservableObject {
         }
         data.credits += listing.sellPriceCR
         let profit = max(0, listing.sellPriceCR - listing.commodity.basePriceCR)
-        data.tradeProfitCR += max(250, profit)
+        data.tradeProfitCR += max(450, profit)
+        CockpitAudioManager.shared.playTractorScoop()
         postBanner("SOLD 1T \(listing.commodity.name.uppercased()) (+\(listing.sellPriceCR) CR)")
         saveToDisk()
     }
@@ -255,29 +561,62 @@ final class CommanderProfile: ObservableObject {
             return
         }
         data.credits -= costCR
-        postBanner("OUTFITTING INSTALLED: \(kind) UPGRADED")
+        CockpitAudioManager.shared.playTractorScoop()
+        postBanner("OUTFITTING INSTALLED: \(kind) UPGRADED TO CLASS \(gradeLetter(for: kind))")
         saveToDisk()
     }
 
+    private func gradeLetter(for kind: String) -> String {
+        let g: Int
+        switch kind {
+        case "FSD": g = data.fsdGrade
+        case "SHIELD": g = data.shieldGrade
+        case "THRUSTER": g = data.thrusterGrade
+        default: g = data.weaponGrade
+        }
+        switch g {
+        case 1: return "D"
+        case 2: return "C"
+        case 3: return "B"
+        default: return "A"
+        }
+    }
+
     private func seedStarterMissions() {
-        data.activeMissions = [
+        let existingIDs = Set(data.activeMissions.map(\.id))
+        let pool: [SoloContractMission] = [
             SoloContractMission(
                 id: "msn_bounty_1",
-                title: "PATROL SWEEP: CLEAR 2 ROGUE DRONES",
-                description: "Eliminate 2 hostile aggressor drones in the local orbital patrol sector.",
-                rewardCR: 25_000,
+                title: "PATROL SWEEP: ELIMINATE 2 PIRATES",
+                description: "Destroy 2 wanted pirate drones in the HazRES or station perimeter.",
+                rewardCR: 28_000,
                 requiredKills: 2,
-                currentKills: 0
+                currentKills: 0,
+                contractKindRaw: SoloContractKind.bounty.rawValue
             ),
             SoloContractMission(
-                id: "msn_bounty_2",
-                title: "SECURITY CONTRACT: ELIMINATE 5 PIRATES",
-                description: "Secure station approach lanes by destroying 5 hostile drones.",
-                rewardCR: 65_000,
-                requiredKills: 5,
-                currentKills: 0
+                id: "msn_mining_1",
+                title: "MINING QUOTA: EXTRACT 3T ASTEROID ORE",
+                description: "Warp to Asteroid Belt Alpha, blast mineral rocks with lasers, and tractor-scoop 3 canisters of ore.",
+                rewardCR: 36_000,
+                requiredKills: 3,
+                currentKills: 0,
+                contractKindRaw: SoloContractKind.mining.rawValue
+            ),
+            SoloContractMission(
+                id: "msn_salvage_1",
+                title: "SALVAGE OP: RECOVER 2 WRECK CORES",
+                description: "Tractor-scoop 2 salvage canisters from destroyed raiders, derelict hulks, or Signal Sources.",
+                rewardCR: 32_000,
+                requiredKills: 2,
+                currentKills: 0,
+                contractKindRaw: SoloContractKind.salvage.rawValue
             )
         ]
+
+        for m in pool where !existingIDs.contains(m.id) && data.activeMissions.count < 3 {
+            data.activeMissions.append(m)
+        }
     }
 
     private var saveFileURL: URL {

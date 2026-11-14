@@ -5,10 +5,15 @@ import simd
 struct FlightHUDTelemetry {
     var shipName: String = "SF-1V Kestrel"
     var currentSystemName: String = "Sol"
-    var currentSystemSecurity: String = "High"
+    var currentSystemSecurity: String = "1.0 HIGH-SEC"
     var credits: Int = 25_000
     var unclaimedBountiesCR: Int = 0
+    var cargoSummaryText: String = "0/20 T"
     var statusBannerText: String = "SYSTEMS ONLINE"
+    var radioSender: String = "FLIGHT CONTROL"
+    var radioMessage: String = "Maintain safe speed inside the station perimeter."
+    var autopilotStatusText: String = ""
+    var isAudioMuted: Bool = false
 
     var speedMetresPerSec: Float = 0.0
     var maxSpeed: Float = 260.0
@@ -51,8 +56,9 @@ struct FlightHUDTelemetry {
     var compassDotY: CGFloat = 0.0
     var isMassLocked: Bool = false
 
-    // 3D Holographic Sensor Disc contacts
+    // 3D Holographic Sensor Disc & EVE Tactical Overview contacts
     var sensorContacts: [SensorDiscContact] = []
+    var overviewContacts: [OverviewContactItem] = []
 
     // Combat Target Lock & Predictive Lead Reticle
     var hasLockedTarget: Bool = false
@@ -69,6 +75,7 @@ struct FlightHUDTelemetry {
     var leadScreenX: CGFloat = 0.0
     var leadScreenY: CGFloat = 0.0
     var showHitMarker: Bool = false
+    var showShieldHitFlash: Bool = false
     var totalKills: Int = 0
 
     // Player Shields, Hull, Weapon Capacitor & SYS/ENG/WEP Pips
@@ -92,6 +99,7 @@ struct FlightHUDView: View {
     let onToggleCamera: () -> Void
     let onToggleFlightAssist: () -> Void
     let onToggleAutoTrack: () -> Void
+    let onToggleAudioMute: () -> Void
     let onTriggerBoost: () -> Void
     let onSetThrottle: (Float) -> Void
     let onOpenNavMap: () -> Void
@@ -105,20 +113,63 @@ struct FlightHUDView: View {
     let onPipWEP: () -> Void
     let onPipReset: () -> Void
     let onOpenTuningDrawer: () -> Void
+    let onSelectOverviewItem: (OverviewContactItem) -> Void
+    let onOverviewApproach: (OverviewContactItem) -> Void
+    let onOverviewOrbit: (OverviewContactItem) -> Void
+    let onOverviewTractor: () -> Void
+    let onOverviewWarpOrDock: (OverviewContactItem) -> Void
+    let onSetTouchPrimaryFire: (Bool) -> Void
+    let onSetTouchSecondaryFire: (Bool) -> Void
+
+    @State private var showOverviewExpanded: Bool = true
+    @State private var selectedOverviewCategory: OverviewCategory = .all
+    @State private var selectedOverviewID: String? = nil
 
     var body: some View {
         ZStack {
             CenterSpatialHUDOverlay(hud: hud)
                 .allowsHitTesting(false)
 
+            if hud.showShieldHitFlash {
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(Color.cyan.opacity(0.65), lineWidth: 6)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
+
             if hud.isHyperspaceJumping {
                 HyperspaceWitchSpaceOverlay(destinationName: hud.hyperspaceDestinationName)
                     .allowsHitTesting(false)
             }
 
-            VStack {
-                TopCommanderStatusBanner(hud: hud)
-                    .padding(.top, 14)
+            VStack(spacing: 8) {
+                HStack(alignment: .top) {
+                    Spacer()
+
+                    TopCommanderStatusBanner(
+                        hud: hud,
+                        onToggleAudioMute: onToggleAudioMute
+                    )
+
+                    Spacer()
+
+                    if !minimalHUDMode {
+                        EveTacticalOverviewPanel(
+                            contacts: hud.overviewContacts,
+                            autopilotStatusText: hud.autopilotStatusText,
+                            isExpanded: $showOverviewExpanded,
+                            selectedCategory: $selectedOverviewCategory,
+                            selectedID: $selectedOverviewID,
+                            onSelectItem: onSelectOverviewItem,
+                            onApproach: onOverviewApproach,
+                            onOrbit: onOverviewOrbit,
+                            onTractor: onOverviewTractor,
+                            onWarpOrDock: onOverviewWarpOrDock
+                        )
+                    }
+                }
+                .padding(.top, 12)
+                .padding(.horizontal, 18)
 
                 Spacer()
 
@@ -156,7 +207,9 @@ struct FlightHUDView: View {
                             onPipENG: onPipENG,
                             onPipWEP: onPipWEP,
                             onPipReset: onPipReset,
-                            onOpenTuningDrawer: onOpenTuningDrawer
+                            onOpenTuningDrawer: onOpenTuningDrawer,
+                            onSetTouchPrimaryFire: onSetTouchPrimaryFire,
+                            onSetTouchSecondaryFire: onSetTouchSecondaryFire
                         )
                     }
                 }
@@ -167,26 +220,52 @@ struct FlightHUDView: View {
     }
 }
 
-// MARK: - Top Commander & FSD Alert Banner
+// MARK: - Top Commander, Security & Live Radio Comms Banner
 
 private struct TopCommanderStatusBanner: View {
     let hud: FlightHUDTelemetry
+    let onToggleAudioMute: () -> Void
 
     private var sysHeader: String {
-        "\(hud.currentSystemName.uppercased()) SYSTEM (\(hud.currentSystemSecurity.uppercased())) • \(hud.credits) CR"
+        "\(hud.currentSystemName.uppercased()) (\(hud.currentSystemSecurity)) • \(hud.shipName.uppercased()) • \(hud.credits) CR • HOLD \(hud.cargoSummaryText)"
+    }
+
+    private var radioLine: String {
+        "[\(hud.radioSender)]: \"\(hud.radioMessage)\""
+    }
+
+    private var audioTitle: String {
+        hud.isAudioMuted ? "AUDIO:MUTE" : "AUDIO:ON"
+    }
+
+    private var audioColor: Color {
+        hud.isAudioMuted ? .secondary : .mint
     }
 
     var body: some View {
-        VStack(spacing: 4) {
-            Text(sysHeader)
-                .font(.system(size: 14, weight: .heavy, design: .monospaced))
-                .foregroundStyle(.orange)
+        VStack(spacing: 3) {
+            HStack(spacing: 10) {
+                Text(sysHeader)
+                    .font(.system(size: 14, weight: .heavy, design: .monospaced))
+                    .foregroundStyle(.orange)
+                    .lineLimit(1)
+
+                Button(action: onToggleAudioMute) {
+                    Text(audioTitle)
+                        .font(.system(size: 14, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(audioColor.opacity(0.22))
+                        .foregroundStyle(audioColor)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+            }
 
             if hud.isFSDCharging {
                 Text(hud.fsdCountdownText)
-                    .font(.system(size: 18, weight: .heavy, design: .monospaced))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 4)
+                    .font(.system(size: 16, weight: .heavy, design: .monospaced))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 3)
                     .background(Color.cyan.opacity(0.28))
                     .foregroundStyle(.cyan)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -194,16 +273,239 @@ private struct TopCommanderStatusBanner: View {
                 Text(hud.statusBannerText)
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .foregroundStyle(.cyan)
+                    .lineLimit(1)
             }
+
+            Text(radioLine)
+                .font(.system(size: 14, weight: .regular, design: .monospaced))
+                .foregroundStyle(.mint)
+                .lineLimit(1)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 7)
-        .background(Color.black.opacity(0.68))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(Color.black.opacity(0.74))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color.orange.opacity(0.45), lineWidth: 1.2)
         )
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+// MARK: - EVE Online Tactical Overview Panel (Collapsible Right-Side Table)
+
+private struct EveTacticalOverviewPanel: View {
+    let contacts: [OverviewContactItem]
+    let autopilotStatusText: String
+    @Binding var isExpanded: Bool
+    @Binding var selectedCategory: OverviewCategory
+    @Binding var selectedID: String?
+    let onSelectItem: (OverviewContactItem) -> Void
+    let onApproach: (OverviewContactItem) -> Void
+    let onOrbit: (OverviewContactItem) -> Void
+    let onTractor: () -> Void
+    let onWarpOrDock: (OverviewContactItem) -> Void
+
+    private var filteredContacts: [OverviewContactItem] {
+        let base: [OverviewContactItem]
+        if selectedCategory == .all {
+            base = contacts
+        } else {
+            base = contacts.filter { $0.category == selectedCategory }
+        }
+        return Array(base.prefix(5))
+    }
+
+    private var activeSelectedItem: OverviewContactItem? {
+        if let id = selectedID, let match = contacts.first(where: { $0.id == id }) {
+            return match
+        }
+        return filteredContacts.first
+    }
+
+    private var toggleHeaderTitle: String {
+        isExpanded ? "▾ EVE OVERVIEW" : "▸ EVE OVERVIEW (\(contacts.count))"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Button {
+                    isExpanded.toggle()
+                } label: {
+                    Text(toggleHeaderTitle)
+                        .font(.system(size: 14, weight: .heavy, design: .monospaced))
+                        .foregroundStyle(.cyan)
+                }
+
+                Spacer()
+
+                if !autopilotStatusText.isEmpty {
+                    Text(autopilotStatusText)
+                        .font(.system(size: 14, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.green)
+                        .lineLimit(1)
+                }
+            }
+
+            if isExpanded {
+                // One-Tap EVE Command Action Bar
+                HStack(spacing: 5) {
+                    OverviewCommandButton(
+                        title: "APPROACH",
+                        color: .cyan,
+                        action: {
+                            if let item = activeSelectedItem {
+                                onApproach(item)
+                            }
+                        }
+                    )
+                    OverviewCommandButton(
+                        title: "ORBIT 500M",
+                        color: .mint,
+                        action: {
+                            if let item = activeSelectedItem {
+                                onOrbit(item)
+                            }
+                        }
+                    )
+                    OverviewCommandButton(
+                        title: "TRACTOR",
+                        color: .green,
+                        action: onTractor
+                    )
+                    OverviewCommandButton(
+                        title: "WARP/DOCK",
+                        color: .orange,
+                        action: {
+                            if let item = activeSelectedItem {
+                                onWarpOrDock(item)
+                            }
+                        }
+                    )
+                }
+
+                // Filter Category Tabs
+                HStack(spacing: 4) {
+                    ForEach(OverviewCategory.allCases) { cat in
+                        OverviewFilterTabButton(
+                            title: cat.rawValue,
+                            isSelected: selectedCategory == cat,
+                            action: { selectedCategory = cat }
+                        )
+                    }
+                }
+
+                // Distance-Sorted Contact Rows
+                VStack(spacing: 3) {
+                    ForEach(filteredContacts) { item in
+                        OverviewContactRowView(
+                            item: item,
+                            isSelected: activeSelectedItem?.id == item.id,
+                            onTap: {
+                                selectedID = item.id
+                                onSelectItem(item)
+                            }
+                        )
+                    }
+                }
+            }
+        }
+        .frame(width: isExpanded ? 335 : 185, alignment: .leading)
+        .padding(10)
+        .background(Color.black.opacity(0.78))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.cyan.opacity(0.50), lineWidth: 1.2)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+private struct OverviewCommandButton: View {
+    let title: String
+    let color: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(color.opacity(0.22))
+                .foregroundStyle(color)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+    }
+}
+
+private struct OverviewFilterTabButton: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    private var bgColor: Color {
+        isSelected ? Color.orange.opacity(0.26) : Color.white.opacity(0.06)
+    }
+
+    private var fgColor: Color {
+        isSelected ? .orange : .secondary
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(bgColor)
+                .foregroundStyle(fgColor)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+    }
+}
+
+private struct OverviewContactRowView: View {
+    let item: OverviewContactItem
+    let isSelected: Bool
+    let onTap: () -> Void
+
+    private var rowColor: Color {
+        if item.isHostile { return .red }
+        if item.isCanister { return .green }
+        if item.isAsteroid { return .yellow }
+        if item.isStation { return .cyan }
+        return .white
+    }
+
+    private var bgColor: Color {
+        isSelected ? Color.cyan.opacity(0.22) : Color.white.opacity(0.04)
+    }
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 6) {
+                Text(item.name)
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .foregroundStyle(rowColor)
+                    .lineLimit(1)
+                Spacer()
+                Text(item.typeBadge)
+                    .font(.system(size: 14, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text(item.distanceText)
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.cyan)
+                    .frame(width: 68, alignment: .trailing)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(bgColor)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -663,7 +965,7 @@ private struct LeftNavAndTargetHoloPanel: View {
     }
 
     private var targetHeaderTitle: String {
-        hud.hasLockedTarget ? "WANTED: \(hud.targetName)" : "NO COMBAT TARGET"
+        hud.hasLockedTarget ? "LOCKED: \(hud.targetName)" : "NO COMBAT TARGET"
     }
 
     private var targetHeaderColor: Color {
@@ -807,7 +1109,7 @@ private struct LeftNavAndTargetHoloPanel: View {
     }
 }
 
-// MARK: - Right Cockpit Panel ([4] INT PANEL)
+// MARK: - Right Cockpit Panel ([4] INT PANEL + Touch Fire Triggers)
 
 private struct RightFlightAndPipsHoloPanel: View {
     let hud: FlightHUDTelemetry
@@ -820,6 +1122,11 @@ private struct RightFlightAndPipsHoloPanel: View {
     let onPipWEP: () -> Void
     let onPipReset: () -> Void
     let onOpenTuningDrawer: () -> Void
+    let onSetTouchPrimaryFire: (Bool) -> Void
+    let onSetTouchSecondaryFire: (Bool) -> Void
+
+    @State private var isFiringLasersTouch: Bool = false
+    @State private var isFiringCannonsTouch: Bool = false
 
     private var speedText: String {
         String(format: "%03.0f", hud.speedMetresPerSec)
@@ -834,7 +1141,7 @@ private struct RightFlightAndPipsHoloPanel: View {
     }
 
     private var agilityZoneText: String {
-        hud.isInBlueZone ? "BLUE ZONE (MAX AGILITY)" : "WEP CAP \(Int(hud.weaponCapacitor))%"
+        hud.isInBlueZone ? "BLUE ZONE (+35% TURN)" : "WEP CAP \(Int(hud.weaponCapacitor))%"
     }
 
     private var agilityZoneColor: Color {
@@ -857,8 +1164,45 @@ private struct RightFlightAndPipsHoloPanel: View {
         hud.flightAssistEnabled ? .green : .orange
     }
 
+    private var laserBtnBg: Color {
+        isFiringLasersTouch ? Color.cyan.opacity(0.45) : Color.cyan.opacity(0.18)
+    }
+
+    private var cannonBtnBg: Color {
+        isFiringCannonsTouch ? Color.orange.opacity(0.45) : Color.orange.opacity(0.18)
+    }
+
     var body: some View {
-        VStack(alignment: .trailing, spacing: 8) {
+        VStack(alignment: .trailing, spacing: 7) {
+            // Touch-screen Primary & Secondary Weapon Fire Triggers (Hold or Toggle)
+            HStack(spacing: 8) {
+                Button {
+                    isFiringLasersTouch.toggle()
+                    onSetTouchPrimaryFire(isFiringLasersTouch)
+                } label: {
+                    Text(isFiringLasersTouch ? "LASERS: FIRING" : "FIRE LASERS [RT]")
+                        .font(.system(size: 14, weight: .heavy, design: .monospaced))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .background(laserBtnBg)
+                        .foregroundStyle(.cyan)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+
+                Button {
+                    isFiringCannonsTouch.toggle()
+                    onSetTouchSecondaryFire(isFiringCannonsTouch)
+                } label: {
+                    Text(isFiringCannonsTouch ? "CANNONS: FIRING" : "CANNONS [LT]")
+                        .font(.system(size: 14, weight: .heavy, design: .monospaced))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .background(cannonBtnBg)
+                        .foregroundStyle(.orange)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+            }
+
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(playerHealthText)
@@ -873,7 +1217,7 @@ private struct RightFlightAndPipsHoloPanel: View {
 
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
                     Text(speedText)
-                        .font(.system(size: 28, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 26, weight: .heavy, design: .monospaced))
                         .foregroundStyle(speedColor)
                     Text("m/s")
                         .font(.system(size: 14, weight: .bold, design: .monospaced))
@@ -1042,7 +1386,6 @@ private struct SpeedThrottleBar: View {
             let w = geo.size.width
             let speedW = max(0, min(w, w * CGFloat(speedFraction)))
             let thrX = max(0, min(w - 3, w * CGFloat(throttleFraction)))
-            // Elite "Blue Zone" sweet spot band (40%..65% of cruise speed)
             let blueStart = w * 0.24
             let blueWidth = w * 0.16
 
@@ -1050,7 +1393,6 @@ private struct SpeedThrottleBar: View {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Color.white.opacity(0.12))
 
-                // Blue Sweet-Spot Zone marker on throttle bar
                 Rectangle()
                     .fill(Color.cyan.opacity(0.32))
                     .frame(width: blueWidth, height: 11)

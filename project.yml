@@ -23,8 +23,8 @@ targets:
       path: StarfallApp/Info.plist
       properties:
         CFBundleDisplayName: Starfall
-        CFBundleShortVersionString: "0.2.0"
-        CFBundleVersion: "3"
+        CFBundleShortVersionString: "0.3.0"
+        CFBundleVersion: "4"
         UILaunchScreen:
           UIColorName: ""
         UIRequiresFullScreen: true

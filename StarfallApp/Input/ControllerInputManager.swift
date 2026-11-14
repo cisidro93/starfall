@@ -22,6 +22,8 @@ final class ControllerInputManager: ObservableObject {
     private var prevRB = false
     private var prevA = false
     private var pendingBoostRequest = false
+    var touchPrimaryFireHeld = false
+    var touchSecondaryFireHeld = false
     private var prevB = false
     private var prevX = false
     private var prevY = false
@@ -176,6 +178,10 @@ final class ControllerInputManager: ObservableObject {
         next.cameraToggleTriggered = false
 
         guard let pad = activeController?.extendedGamepad else {
+            next.primaryFireHeld = touchPrimaryFireHeld
+            next.secondaryFireHeld = touchSecondaryFireHeld
+            next.primaryFireValue = touchPrimaryFireHeld ? 1.0 : 0.0
+            next.secondaryFireValue = touchSecondaryFireHeld ? 1.0 : 0.0
             state = next
             return next
         }
@@ -257,10 +263,10 @@ final class ControllerInputManager: ObservableObject {
             }
         } else {
             next.throttleDelta = 0.0
-            next.primaryFireValue = rtVal
-            next.secondaryFireValue = ltVal
-            next.primaryFireHeld = rtVal > 0.25
-            next.secondaryFireHeld = ltVal > 0.25
+            next.primaryFireValue = max(rtVal, touchPrimaryFireHeld ? 1.0 : 0.0)
+            next.secondaryFireValue = max(ltVal, touchSecondaryFireHeld ? 1.0 : 0.0)
+            next.primaryFireHeld = rtVal > 0.25 || touchPrimaryFireHeld
+            next.secondaryFireHeld = ltVal > 0.25 || touchSecondaryFireHeld
 
             if next.primaryFireHeld && !prevPrimaryFire {
                 appendLog("[RT] Primary Pulse Lasers")
