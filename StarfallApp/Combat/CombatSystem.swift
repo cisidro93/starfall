@@ -1112,13 +1112,17 @@ final class CombatSystemManager {
         root.name = name
         root.scale = SIMD3<Float>(repeating: isBoss ? 3.1 : 2.2)
 
-        let armorMat = SimpleMaterial(
-            color: isBoss
-                ? UIColor(red: 0.36, green: 0.14, blue: 0.18, alpha: 1.0)
-                : UIColor(red: 0.26, green: 0.29, blue: 0.35, alpha: 1.0),
-            roughness: 0.32,
-            isMetallic: true
-        )
+        var armorMat = SimpleMaterial()
+        let baseDroneTint = isBoss
+            ? UIColor(red: 0.56, green: 0.24, blue: 0.28, alpha: 1.0)
+            : UIColor(red: 0.58, green: 0.64, blue: 0.75, alpha: 1.0)
+        if let hullTex = SolSceneBuilder.loadAssetTexture("tex_ship_hull_plating") {
+            armorMat.color = .init(tint: baseDroneTint, texture: .init(hullTex))
+        } else {
+            armorMat.color = .init(tint: baseDroneTint)
+        }
+        armorMat.roughness = .init(floatLiteral: 0.32)
+        armorMat.metallic = .init(floatLiteral: 0.85)
         let crimsonMat = UnlitMaterial(color: UIColor(red: 1.0, green: 0.22, blue: 0.18, alpha: 1.0))
         let amberMat = UnlitMaterial(color: UIColor(red: 1.0, green: 0.65, blue: 0.15, alpha: 1.0))
 
@@ -1171,11 +1175,14 @@ final class CombatSystemManager {
         root.name = name
         root.scale = SIMD3<Float>(repeating: scale)
 
-        let hullMat = SimpleMaterial(
-            color: UIColor(red: 0.24, green: 0.30, blue: 0.38, alpha: 1.0),
-            roughness: 0.35,
-            isMetallic: true
-        )
+        var hullMat = SimpleMaterial()
+        if let hullTex = SolSceneBuilder.loadAssetTexture("tex_ship_hull_plating") {
+            hullMat.color = .init(tint: UIColor(red: 0.65, green: 0.76, blue: 0.88, alpha: 1.0), texture: .init(hullTex))
+        } else {
+            hullMat.color = .init(tint: UIColor(red: 0.24, green: 0.30, blue: 0.38, alpha: 1.0))
+        }
+        hullMat.roughness = .init(floatLiteral: 0.35)
+        hullMat.metallic = .init(floatLiteral: 0.85)
         let glowMat = UnlitMaterial(color: accentColor)
 
         let hullMesh = MeshResource.generateBox(size: SIMD3<Float>(3.2, 1.6, 6.8), cornerRadius: 0.45)
@@ -1206,11 +1213,14 @@ final class CombatSystemManager {
         let root = Entity()
         root.name = name
 
-        let rockMat = SimpleMaterial(
-            color: UIColor(red: 0.32, green: 0.30, blue: 0.28, alpha: 1.0),
-            roughness: 0.88,
-            isMetallic: false
-        )
+        var rockMat = SimpleMaterial()
+        if let rockTex = SolSceneBuilder.loadAssetTexture("tex_moon_cratered") {
+            rockMat.color = .init(tint: UIColor(red: 0.72, green: 0.68, blue: 0.64, alpha: 1.0), texture: .init(rockTex))
+        } else {
+            rockMat.color = .init(tint: UIColor(red: 0.32, green: 0.30, blue: 0.28, alpha: 1.0))
+        }
+        rockMat.roughness = .init(floatLiteral: 0.88)
+        rockMat.metallic = .init(floatLiteral: 0.05)
         let crystalMat = UnlitMaterial(color: veinColor)
 
         let mainMesh = MeshResource.generateBox(

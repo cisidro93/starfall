@@ -1,0 +1,12 @@
+﻿{
+  "images" : [
+    {
+      "filename" : "tex_planet_gas_giant.jpg",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

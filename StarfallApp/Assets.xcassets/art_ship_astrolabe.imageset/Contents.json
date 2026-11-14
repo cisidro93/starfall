@@ -1,0 +1,12 @@
+﻿{
+  "images" : [
+    {
+      "filename" : "art_ship_astrolabe.jpg",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

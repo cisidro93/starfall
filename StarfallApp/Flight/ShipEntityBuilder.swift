@@ -60,11 +60,14 @@ enum ShipEntityBuilder {
             hullScale = SIMD3<Float>(1.0, 1.0, 1.0)
         }
 
-        let armorMat = SimpleMaterial(
-            color: hullColor,
-            roughness: 0.30,
-            isMetallic: true
-        )
+        var armorMat = SimpleMaterial()
+        if let hullTex = SolSceneBuilder.loadAssetTexture("tex_ship_hull_plating") {
+            armorMat.color = .init(tint: hullColor.withAlphaComponent(1.0), texture: .init(hullTex))
+        } else {
+            armorMat.color = .init(tint: hullColor)
+        }
+        armorMat.roughness = .init(floatLiteral: 0.30)
+        armorMat.metallic = .init(floatLiteral: 0.88)
         let accentMat = SimpleMaterial(
             color: trimColor,
             roughness: 0.22,

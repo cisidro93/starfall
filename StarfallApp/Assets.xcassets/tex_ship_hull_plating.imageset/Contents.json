@@ -1,0 +1,12 @@
+﻿{
+  "images" : [
+    {
+      "filename" : "tex_ship_hull_plating.jpg",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

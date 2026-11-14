@@ -189,6 +189,36 @@ private struct StarportLeftHangarColumn: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            ZStack(alignment: .bottomLeading) {
+                Image(commander.activeHull.artworkAssetName)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(height: 112)
+                    .clipped()
+                    .overlay(
+                        LinearGradient(
+                            colors: [.clear, Color.black.opacity(0.85)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(commander.activeHull.name.uppercased())
+                        .font(.system(size: 14, weight: .heavy, design: .monospaced))
+                        .foregroundStyle(.orange)
+                    Text(commander.activeHull.roleTitle.uppercased())
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.cyan)
+                }
+                .padding(8)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.orange.opacity(0.55), lineWidth: 1.2)
+            )
+
             Text("COMMANDER & ACTIVE HULL")
                 .font(.system(size: 15, weight: .heavy, design: .monospaced))
                 .foregroundStyle(.orange)
@@ -471,7 +501,17 @@ private struct ShipyardHullCardView: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
+            Image(hull.artworkAssetName)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 132, height: 82)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(btnFgColor.opacity(0.65), lineWidth: 1.3)
+                )
+
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(hull.name.uppercased())
@@ -683,6 +723,7 @@ private struct CodexEntryItem: Identifiable {
     let category: String
     let title: String
     let bodyText: String
+    let artworkName: String
 }
 
 private struct CodexAndHandbookPane: View {
@@ -691,31 +732,36 @@ private struct CodexAndHandbookPane: View {
             id: "guide_flight",
             category: "PILOT'S HANDBOOK • FLIGHT & DOGFIGHTING",
             title: "BLUE-ZONE AGILITY & POWER DISTRIBUTOR PIPS (SYS / ENG / WEP)",
-            bodyText: "Keep your throttle inside the glowing cyan Blue Zone (40%–65%) during dogfights for a +35% pitch and yaw turn-rate boost. Use D-Pad (or touch SYS/ENG/WEP buttons) to route reactor power: 4 Pips to SYS cuts incoming shield damage by 52% and speeds shield regen; 4 Pips to ENG maximizes cruise speed and boost recharge; 4 Pips to WEP keeps your Pulse Lasers and Multi-Cannons firing continuously."
+            bodyText: "Keep your throttle inside the glowing cyan Blue Zone (40%–65%) during dogfights for a +35% pitch and yaw turn-rate boost. Use D-Pad (or touch SYS/ENG/WEP buttons) to route reactor power: 4 Pips to SYS cuts incoming shield damage by 52% and speeds shield regen; 4 Pips to ENG maximizes cruise speed and boost recharge; 4 Pips to WEP keeps your Pulse Lasers and Multi-Cannons firing continuously.",
+            artworkName: "art_ship_viper"
         ),
         CodexEntryItem(
             id: "guide_overview",
             category: "PILOT'S HANDBOOK • EVE TACTICAL OVERVIEW",
             title: "USING THE COLLAPSIBLE RIGHT-HAND TACTICAL OVERVIEW",
-            bodyText: "Tap any contact in the top-right EVE Overview list (Pirates, Mineable Asteroids, Ore Canisters, Stations, or Signal Sources) and tap APPROACH or ORBIT 500M to engage hands-free flight assist. Touching the flight stick at any time immediately returns you to manual control."
+            bodyText: "Tap any contact in the top-right EVE Overview list (Pirates, Mineable Asteroids, Ore Canisters, Stations, or Signal Sources) and tap APPROACH or ORBIT 500M to engage hands-free flight assist. Touching the flight stick at any time immediately returns you to manual control.",
+            artworkName: "art_ship_cobra"
         ),
         CodexEntryItem(
             id: "guide_mining",
             category: "PILOT'S HANDBOOK • ASTEROID MINING & SALVAGE",
             title: "THERMAL LASER MINING & MAGNETIC TRACTOR SCOOP",
-            bodyText: "Supercruise to Asteroid Belt Alpha or a Crystalline Anomaly and fire your Pulse Lasers at mineral-rich asteroids (Titanium, Core Crystal, or Void Opals). At 50% and 0% rock integrity, glowing 3D Ore Canisters fracture into space. Fly within 130m–260m (or tap TRACTOR on the Overview) to beam canisters into your hold."
+            bodyText: "Supercruise to Asteroid Belt Alpha or a Crystalline Anomaly and fire your Pulse Lasers at mineral-rich asteroids (Titanium, Core Crystal, or Void Opals). At 50% and 0% rock integrity, glowing 3D Ore Canisters fracture into space. Fly within 130m–260m (or tap TRACTOR on the Overview) to beam canisters into your hold.",
+            artworkName: "art_ship_atlas"
         ),
         CodexEntryItem(
             id: "lore_sol",
             category: "GALNET ARCHIVE • 3312 HUMAN BUBBLE",
             title: "THE SOL CORRIDOR & GAGARIN GATEWAY",
-            bodyText: "Following the activation of the first Frame Shift Witch-Space conduits, humanity expanded across the 20-light-year Solar Neighbourhood. Gagarin Gateway in high Earth orbit serves as the primary High-Tech logistics ring for independent Commanders licensed by the Pilots' Guild."
+            bodyText: "Following the activation of the first Frame Shift Witch-Space conduits, humanity expanded across the 20-light-year Solar Neighbourhood. Gagarin Gateway in high Earth orbit serves as the primary High-Tech logistics ring for independent Commanders licensed by the Pilots' Guild.",
+            artworkName: "art_starport_concourse"
         ),
         CodexEntryItem(
             id: "lore_forsaken",
             category: "GALNET ARCHIVE • FRONTIER MYSTERIES",
             title: "THE FORSAKEN RELAY INCIDENT & ROGUE DRONE SWARMS",
-            bodyText: "Deep-space telemetry relays across Barnard's Star, Wolf 359, and Sol have gone dark following raids by autonomous 'Vortex' aggressor wings. Salvage crews recovering Ancient Salvage Cores from shattered relay hulks report encrypted navigational beacons pointing toward uncharted sectors."
+            bodyText: "Deep-space telemetry relays across Barnard's Star, Wolf 359, and Sol have gone dark following raids by autonomous 'Vortex' aggressor wings. Salvage crews recovering Ancient Salvage Cores from shattered relay hulks report encrypted navigational beacons pointing toward uncharted sectors.",
+            artworkName: "art_codex_hyperdrive"
         )
     ]
 
@@ -741,16 +787,28 @@ private struct CodexEntryCardView: View {
     let entry: CodexEntryItem
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(entry.category)
-                .font(.system(size: 14, weight: .bold, design: .monospaced))
-                .foregroundStyle(.cyan)
-            Text(entry.title)
-                .font(.system(size: 15, weight: .heavy, design: .monospaced))
-                .foregroundStyle(.orange)
-            Text(entry.bodyText)
-                .font(.system(size: 14, weight: .regular, design: .monospaced))
-                .foregroundStyle(.white)
+        HStack(alignment: .top, spacing: 14) {
+            Image(entry.artworkName)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 148, height: 96)
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .stroke(Color.cyan.opacity(0.55), lineWidth: 1.2)
+                )
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(entry.category)
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.cyan)
+                Text(entry.title)
+                    .font(.system(size: 15, weight: .heavy, design: .monospaced))
+                    .foregroundStyle(.orange)
+                Text(entry.bodyText)
+                    .font(.system(size: 14, weight: .regular, design: .monospaced))
+                    .foregroundStyle(.white)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)

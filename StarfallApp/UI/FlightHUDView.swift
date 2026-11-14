@@ -1428,3 +1428,143 @@ private struct ThrottlePresetButton: View {
         }
     }
 }
+
+// MARK: - Native Cockpit Holographic Dual-Thumbstick Touch Overlay (Crash-Proof Touch Pad)
+
+struct HoloTouchFlightSticksOverlay: View {
+    @ObservedObject var inputManager: ControllerInputManager
+
+    private var rightModeTitle: String {
+        inputManager.touchStrafeMode ? "RIGHT PAD: 6DoF STRAFE" : "RIGHT PAD: ROLL & THR"
+    }
+
+    private var rightModeColor: Color {
+        inputManager.touchStrafeMode ? .cyan : .orange
+    }
+
+    var body: some View {
+        VStack {
+            Spacer()
+
+            HStack(alignment: .bottom) {
+                SingleHoloThumbstickPad(
+                    title: "LEFT STICK • PITCH / STEER",
+                    accentColor: .cyan,
+                    stickValue: $inputManager.touchLeftStick
+                )
+
+                Spacer()
+
+                VStack(alignment: .trailing, spacing: 8) {
+                    Button {
+                        inputManager.touchStrafeMode.toggle()
+                    } label: {
+                        Text(rightModeTitle)
+                            .font(.system(size: 14, weight: .bold, design: .monospaced))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(rightModeColor.opacity(0.24))
+                            .foregroundStyle(rightModeColor)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(rightModeColor.opacity(0.65), lineWidth: 1)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+
+                    SingleHoloThumbstickPad(
+                        title: inputManager.touchStrafeMode ? "STRAFE LAT / VERT" : "ROLL / THROTTLE",
+                        accentColor: rightModeColor,
+                        stickValue: $inputManager.touchRightStick
+                    )
+                }
+            }
+            .padding(.horizontal, 28)
+            .padding(.bottom, 250)
+        }
+    }
+}
+
+private struct SingleHoloThumbstickPad: View {
+    let title: String
+    let accentColor: Color
+    @Binding var stickValue: SIMD2<Float>
+
+    private let padRadius: CGFloat = 76.0
+
+    private var knobOffsetX: CGFloat {
+        CGFloat(stickValue.x) * (padRadius - 22.0)
+    }
+
+    private var knobOffsetY: CGFloat {
+        CGFloat(-stickValue.y) * (padRadius - 22.0)
+    }
+
+    private var readoutText: String {
+        String(format: "X:%+.2f  Y:%+.2f", stickValue.x, stickValue.y)
+    }
+
+    var body: some View {
+        VStack(spacing: 5) {
+            Text(title)
+                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                .foregroundStyle(accentColor)
+
+            ZStack {
+                Circle()
+                    .fill(Color.black.opacity(0.62))
+                    .frame(width: padRadius * 2, height: padRadius * 2)
+
+                Circle()
+                    .stroke(accentColor.opacity(0.55), lineWidth: 1.8)
+                    .frame(width: padRadius * 2, height: padRadius * 2)
+
+                Circle()
+                    .stroke(accentColor.opacity(0.22), lineWidth: 1.0)
+                    .frame(width: padRadius * 1.1, height: padRadius * 1.1)
+
+                Rectangle()
+                    .fill(accentColor.opacity(0.22))
+                    .frame(width: padRadius * 1.8, height: 1)
+
+                Rectangle()
+                    .fill(accentColor.opacity(0.22))
+                    .frame(width: 1, height: padRadius * 1.8)
+
+                Circle()
+                    .fill(accentColor.opacity(0.38))
+                    .frame(width: 46, height: 46)
+                    .overlay(
+                        Circle()
+                            .stroke(accentColor, lineWidth: 2.2)
+                    )
+                    .offset(x: knobOffsetX, y: knobOffsetY)
+            }
+            .contentShape(Circle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        let dx = Float(value.location.x - padRadius) / Float(padRadius - 18.0)
+                        let dy = Float(padRadius - value.location.y) / Float(padRadius - 18.0)
+                        let raw = SIMD2<Float>(dx, dy)
+                        let len = simd_length(raw)
+                        if len > 1.0 {
+                            stickValue = raw / len
+                        } else {
+                            stickValue = raw
+                        }
+                    }
+                    .onEnded { _ in
+                        stickValue = .zero
+                    }
+            )
+
+            Text(readoutText)
+                .font(.system(size: 14, weight: .regular, design: .monospaced))
+                .foregroundStyle(.secondary)
+        }
+        .padding(8)
+        .background(Color.black.opacity(0.45))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+}

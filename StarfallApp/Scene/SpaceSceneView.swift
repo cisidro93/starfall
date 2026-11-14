@@ -882,6 +882,10 @@ struct SpaceSceneView: View {
                     }
                 )
 
+                if inputManager.isUsingVirtualController && !commander.isDocked && !showHoloNavMap {
+                    HoloTouchFlightSticksOverlay(inputManager: inputManager)
+                }
+
                 DebugOverlayView(
                     metrics: metrics,
                     inputManager: inputManager,

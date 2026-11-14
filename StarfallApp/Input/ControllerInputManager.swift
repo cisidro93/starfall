@@ -1,6 +1,7 @@
 import Foundation
 import GameController
 import Combine
+import simd
 
 @MainActor
 final class ControllerInputManager: ObservableObject {
@@ -11,9 +12,11 @@ final class ControllerInputManager: ObservableObject {
     @Published var deadZone: Float = 0.12
     @Published var responseExponent: Float = 2.10
     @Published var modernSteerMode: Bool = true
+    @Published var touchLeftStick: SIMD2<Float> = .zero
+    @Published var touchRightStick: SIMD2<Float> = .zero
+    @Published var touchStrafeMode: Bool = false
 
     private var activeController: GCController?
-    private var virtualController: GCVirtualController?
     private var connectObserver: NSObjectProtocol?
     private var disconnectObserver: NSObjectProtocol?
 
@@ -72,71 +75,28 @@ final class ControllerInputManager: ObservableObject {
 
     private func refreshControllers() {
         let allControllers = GCController.controllers()
-        let virtualGC = virtualController?.controller
-        let physicalControllers = allControllers.filter { $0 !== virtualGC && $0.extendedGamepad != nil }
+        let physicalControllers = allControllers.filter { $0.extendedGamepad != nil }
 
         if let physical = physicalControllers.first {
-            if let vc = virtualController {
-                vc.disconnect()
-                virtualController = nil
-                isUsingVirtualController = false
-            }
             activeController = physical
             let vendor = physical.vendorName ?? "Game Controller"
             controllerStatusText = "\(vendor)"
-        } else if let vc = virtualGC {
-            activeController = vc
-            isUsingVirtualController = true
-            controllerStatusText = "Touch Virtual Pad"
         } else {
             activeController = nil
-            isUsingVirtualController = false
-            controllerStatusText = "Connect Pad (or tap Touch Pad)"
-        }
-    }
-
-    private func startVirtualControllerFallback() {
-        guard virtualController == nil else { return }
-        let config = GCVirtualController.Configuration()
-        config.elements = [
-            GCInputLeftThumbstick,
-            GCInputRightThumbstick,
-            GCInputButtonA,
-            GCInputButtonB,
-            GCInputButtonX,
-            GCInputButtonY,
-            GCInputLeftShoulder,
-            GCInputRightShoulder,
-            GCInputLeftTrigger,
-            GCInputRightTrigger,
-            GCInputDirectionPad,
-        ]
-        let vc = GCVirtualController(configuration: config)
-        virtualController = vc
-        isUsingVirtualController = true
-        controllerStatusText = "Touch Virtual Pad (Fallback)"
-        vc.connect { [weak self] error in
-            MainActor.assumeIsolated {
-                if let error {
-                    self?.appendLog("Virtual pad error: \(error.localizedDescription)")
-                } else {
-                    self?.activeController = vc.controller
-                    self?.appendLog("Touch Virtual Pad ready")
-                }
-            }
+            controllerStatusText = isUsingVirtualController ? "Holo Touch Flight Sticks" : "Connect Pad (or tap Touch Pad)"
         }
     }
 
     func toggleVirtualController() {
-        if let vc = virtualController {
-            vc.disconnect()
-            virtualController = nil
-            isUsingVirtualController = false
-            activeController = nil
-            controllerStatusText = "No Controller (Touch Pad Hidden)"
-            appendLog("Touch Virtual Pad hidden")
+        isUsingVirtualController.toggle()
+        touchLeftStick = .zero
+        touchRightStick = .zero
+        if isUsingVirtualController {
+            controllerStatusText = "Holo Touch Flight Sticks"
+            appendLog("[HUD] Holo Touch Flight Sticks ON")
         } else {
-            startVirtualControllerFallback()
+            refreshControllers()
+            appendLog("[HUD] Holo Touch Flight Sticks OFF")
         }
     }
 
@@ -164,6 +124,7 @@ final class ControllerInputManager: ObservableObject {
     /// Polls the active controller on each simulation tick and updates `state`.
     func pollTick(deltaTime: TimeInterval) -> InputStateComponent {
         var next = state
+        let dt = Float(min(max(deltaTime, 0.0), 0.1))
         next.boostTriggered = pendingBoostRequest
         pendingBoostRequest = false
         next.targetAheadTriggered = false
@@ -178,6 +139,27 @@ final class ControllerInputManager: ObservableObject {
         next.cameraToggleTriggered = false
 
         guard let pad = activeController?.extendedGamepad else {
+            let lx = InputStateComponent.applyStickCurve(touchLeftStick.x, deadZone: deadZone, exponent: responseExponent)
+            let ly = InputStateComponent.applyStickCurve(touchLeftStick.y, deadZone: deadZone, exponent: responseExponent)
+            let rx = InputStateComponent.applyStickCurve(touchRightStick.x, deadZone: deadZone, exponent: responseExponent)
+            let ry = InputStateComponent.applyStickCurve(touchRightStick.y, deadZone: deadZone, exponent: responseExponent)
+
+            next.pitch = ly
+            next.yaw = lx
+            if touchStrafeMode {
+                next.roll = lx * 0.28
+                next.lateralThrust = rx
+                next.verticalThrust = ry
+            } else {
+                next.roll = abs(rx) > 0.05 ? rx : (lx * 0.28)
+                next.lateralThrust = 0.0
+                next.verticalThrust = 0.0
+                if abs(ry) > 0.08 {
+                    next.throttle = min(1.0, max(0.0, next.throttle + ry * dt * 0.75))
+                }
+            }
+            next.lookYaw = 0.0
+            next.lookPitch = 0.0
             next.primaryFireHeld = touchPrimaryFireHeld
             next.secondaryFireHeld = touchSecondaryFireHeld
             next.primaryFireValue = touchPrimaryFireHeld ? 1.0 : 0.0
@@ -185,8 +167,6 @@ final class ControllerInputManager: ObservableObject {
             state = next
             return next
         }
-
-        let dt = Float(min(max(deltaTime, 0.0), 0.1))
         let lbHeld = pad.leftShoulder.isPressed
         next.isModifierHeld = lbHeld
 
@@ -204,10 +184,15 @@ final class ControllerInputManager: ObservableObject {
         }
         prevRB = rbPressed
 
-        let lx = InputStateComponent.applyStickCurve(pad.leftThumbstick.xAxis.value, deadZone: deadZone, exponent: responseExponent)
-        let ly = InputStateComponent.applyStickCurve(pad.leftThumbstick.yAxis.value, deadZone: deadZone, exponent: responseExponent)
-        let rx = InputStateComponent.applyStickCurve(pad.rightThumbstick.xAxis.value, deadZone: deadZone, exponent: responseExponent)
-        let ry = InputStateComponent.applyStickCurve(pad.rightThumbstick.yAxis.value, deadZone: deadZone, exponent: responseExponent)
+        let rawLX = min(1.0, max(-1.0, pad.leftThumbstick.xAxis.value + touchLeftStick.x))
+        let rawLY = min(1.0, max(-1.0, pad.leftThumbstick.yAxis.value + touchLeftStick.y))
+        let rawRX = min(1.0, max(-1.0, pad.rightThumbstick.xAxis.value + touchRightStick.x))
+        let rawRY = min(1.0, max(-1.0, pad.rightThumbstick.yAxis.value + touchRightStick.y))
+
+        let lx = InputStateComponent.applyStickCurve(rawLX, deadZone: deadZone, exponent: responseExponent)
+        let ly = InputStateComponent.applyStickCurve(rawLY, deadZone: deadZone, exponent: responseExponent)
+        let rx = InputStateComponent.applyStickCurve(rawRX, deadZone: deadZone, exponent: responseExponent)
+        let ry = InputStateComponent.applyStickCurve(rawRY, deadZone: deadZone, exponent: responseExponent)
 
         if lbHeld {
             // Hold LB modifier layer:

@@ -1,0 +1,12 @@
+﻿{
+  "images" : [
+    {
+      "filename" : "tex_planet_terran.jpg",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

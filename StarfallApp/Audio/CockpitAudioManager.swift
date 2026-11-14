@@ -16,6 +16,7 @@ final class CockpitAudioManager: ObservableObject {
     private var hyperspaceBoomPlayer: AVAudioPlayer?
     private var shieldHitPlayer: AVAudioPlayer?
     private var explosionPlayer: AVAudioPlayer?
+    private var ambientDronePlayer: AVAudioPlayer?
 
     private var laserPoolIndex: Int = 0
     private var cannonPoolIndex: Int = 0
@@ -25,10 +26,16 @@ final class CockpitAudioManager: ObservableObject {
     private init() {
         configureAudioSession()
         buildSynthesizedSoundBank()
+        ambientDronePlayer?.play()
     }
 
     func toggleMute() {
         isMuted.toggle()
+        if isMuted {
+            ambientDronePlayer?.pause()
+        } else {
+            ambientDronePlayer?.play()
+        }
     }
 
     func playLaserPulse() {
@@ -211,6 +218,18 @@ final class CockpitAudioManager: ObservableObject {
         }
         explosionPlayer = try? AVAudioPlayer(data: expData)
         explosionPlayer?.prepareToPlay()
+
+        // 10. Seamless Deep-Space Cockpit & Fusion Thruster Ambient Pad Loop (4.0s exact integer cycles)
+        let ambientData = Self.makeWAVData(duration: 4.0, volume: 0.085) { t, _ in
+            let sub = sin(2.0 * .pi * 55.0 * t) * 0.50
+            let fifth = sin(2.0 * .pi * 82.5 * t) * 0.30
+            let octave = sin(2.0 * .pi * 110.0 * t) * 0.20
+            let slowPulse = 0.78 + 0.22 * sin(2.0 * .pi * 0.25 * t)
+            return (sub + fifth + octave) * slowPulse
+        }
+        ambientDronePlayer = try? AVAudioPlayer(data: ambientData)
+        ambientDronePlayer?.numberOfLoops = -1
+        ambientDronePlayer?.prepareToPlay()
     }
 
     private static func makeWAVData(

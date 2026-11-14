@@ -8,6 +8,21 @@ import StarfallGalaxy
 @MainActor
 enum SolSceneBuilder {
 
+    private static var textureCache: [String: TextureResource] = [:]
+
+    static func loadAssetTexture(_ name: String) -> TextureResource? {
+        if let cached = textureCache[name] {
+            return cached
+        }
+        guard let uiImage = UIImage(named: name),
+              let cgImage = uiImage.cgImage,
+              let tex = try? TextureResource(image: cgImage, options: .init(semantic: .color)) else {
+            return nil
+        }
+        textureCache[name] = tex
+        return tex
+    }
+
     struct BuiltSolEnvironment {
         let stationEntity: Entity
         let rotatingWheelEntity: Entity
@@ -189,7 +204,11 @@ enum SolSceneBuilder {
         var planetMat = SimpleMaterial()
         var atmoColor = UIColor(red: 0.32, green: 0.72, blue: 1.0, alpha: 1.0)
 
-        if isSol, let tex = makeProceduralEarthTexture(width: 256, height: 128) {
+        let terranTex = loadAssetTexture("tex_planet_terran") ?? makeProceduralEarthTexture(width: 256, height: 128)
+        let gasTex = loadAssetTexture("tex_planet_gas_giant")
+        let volcanicTex = loadAssetTexture("tex_planet_volcanic")
+
+        if isSol, let tex = terranTex {
             planetMat.color = .init(tint: .white, texture: .init(tex))
             env.primaryPlanetRingEntity.isEnabled = false
         } else {
@@ -197,27 +216,47 @@ enum SolSceneBuilder {
             switch seed {
             case 0:
                 // Ringed Azure Ice Giant
-                planetMat.color = .init(tint: UIColor(red: 0.22, green: 0.62, blue: 0.88, alpha: 1.0))
+                if let tex = gasTex {
+                    planetMat.color = .init(tint: UIColor(red: 0.55, green: 0.85, blue: 1.0, alpha: 1.0), texture: .init(tex))
+                } else {
+                    planetMat.color = .init(tint: UIColor(red: 0.22, green: 0.62, blue: 0.88, alpha: 1.0))
+                }
                 atmoColor = UIColor(red: 0.40, green: 0.88, blue: 1.0, alpha: 1.0)
                 env.primaryPlanetRingEntity.isEnabled = true
             case 1:
                 // Crimson Volcanic / Lava World
-                planetMat.color = .init(tint: UIColor(red: 0.68, green: 0.22, blue: 0.14, alpha: 1.0))
+                if let tex = volcanicTex {
+                    planetMat.color = .init(tint: .white, texture: .init(tex))
+                } else {
+                    planetMat.color = .init(tint: UIColor(red: 0.68, green: 0.22, blue: 0.14, alpha: 1.0))
+                }
                 atmoColor = UIColor(red: 1.0, green: 0.42, blue: 0.18, alpha: 1.0)
                 env.primaryPlanetRingEntity.isEnabled = false
             case 2:
                 // Ringed Amber Gas Giant
-                planetMat.color = .init(tint: UIColor(red: 0.82, green: 0.58, blue: 0.32, alpha: 1.0))
+                if let tex = gasTex {
+                    planetMat.color = .init(tint: .white, texture: .init(tex))
+                } else {
+                    planetMat.color = .init(tint: UIColor(red: 0.82, green: 0.58, blue: 0.32, alpha: 1.0))
+                }
                 atmoColor = UIColor(red: 1.0, green: 0.78, blue: 0.42, alpha: 1.0)
                 env.primaryPlanetRingEntity.isEnabled = true
             case 3:
                 // Emerald Frontier Super-Earth
-                planetMat.color = .init(tint: UIColor(red: 0.14, green: 0.54, blue: 0.44, alpha: 1.0))
+                if let tex = terranTex {
+                    planetMat.color = .init(tint: UIColor(red: 0.65, green: 1.0, blue: 0.88, alpha: 1.0), texture: .init(tex))
+                } else {
+                    planetMat.color = .init(tint: UIColor(red: 0.14, green: 0.54, blue: 0.44, alpha: 1.0))
+                }
                 atmoColor = UIColor(red: 0.25, green: 0.92, blue: 0.72, alpha: 1.0)
                 env.primaryPlanetRingEntity.isEnabled = true
             default:
                 // Deep Cobalt Ocean World
-                planetMat.color = .init(tint: UIColor(red: 0.16, green: 0.36, blue: 0.76, alpha: 1.0))
+                if let tex = terranTex {
+                    planetMat.color = .init(tint: UIColor(red: 0.78, green: 0.90, blue: 1.0, alpha: 1.0), texture: .init(tex))
+                } else {
+                    planetMat.color = .init(tint: UIColor(red: 0.16, green: 0.36, blue: 0.76, alpha: 1.0))
+                }
                 atmoColor = UIColor(red: 0.35, green: 0.68, blue: 1.0, alpha: 1.0)
                 env.primaryPlanetRingEntity.isEnabled = false
             }
@@ -285,7 +324,7 @@ enum SolSceneBuilder {
 
         let sphereMesh = MeshResource.generateSphere(radius: 1.0)
         var earthMaterial = SimpleMaterial()
-        if let tex = makeProceduralEarthTexture(width: 256, height: 128) {
+        if let tex = loadAssetTexture("tex_planet_terran") ?? makeProceduralEarthTexture(width: 256, height: 128) {
             earthMaterial.color = .init(tint: .white, texture: .init(tex))
         } else {
             earthMaterial.color = .init(tint: UIColor(red: 0.14, green: 0.42, blue: 0.78, alpha: 1.0))
@@ -328,11 +367,14 @@ enum SolSceneBuilder {
         )
 
         let sphereMesh = MeshResource.generateSphere(radius: 1.0)
-        let moonMaterial = SimpleMaterial(
-            color: UIColor(red: 0.68, green: 0.69, blue: 0.72, alpha: 1.0),
-            roughness: 0.92,
-            isMetallic: false
-        )
+        var moonMaterial = SimpleMaterial()
+        if let moonTex = loadAssetTexture("tex_moon_cratered") {
+            moonMaterial.color = .init(tint: .white, texture: .init(moonTex))
+        } else {
+            moonMaterial.color = .init(tint: UIColor(red: 0.68, green: 0.69, blue: 0.72, alpha: 1.0))
+        }
+        moonMaterial.roughness = .init(floatLiteral: 0.92)
+        moonMaterial.metallic = .init(floatLiteral: 0.0)
         let moonModel = ModelEntity(mesh: sphereMesh, materials: [moonMaterial])
         container.addChild(moonModel)
 
@@ -353,16 +395,23 @@ enum SolSceneBuilder {
         rotatingWheel.name = "RotatingHabitatWheel"
         stationRoot.addChild(rotatingWheel)
 
-        let hullSteel = SimpleMaterial(
-            color: UIColor(red: 0.24, green: 0.27, blue: 0.32, alpha: 1.0),
-            roughness: 0.40,
-            isMetallic: true
-        )
-        let darkArmor = SimpleMaterial(
-            color: UIColor(red: 0.13, green: 0.15, blue: 0.19, alpha: 1.0),
-            roughness: 0.52,
-            isMetallic: true
-        )
+        var hullSteel = SimpleMaterial()
+        if let hullTex = loadAssetTexture("tex_ship_hull_plating") {
+            hullSteel.color = .init(tint: UIColor(red: 0.75, green: 0.80, blue: 0.88, alpha: 1.0), texture: .init(hullTex))
+        } else {
+            hullSteel.color = .init(tint: UIColor(red: 0.24, green: 0.27, blue: 0.32, alpha: 1.0))
+        }
+        hullSteel.roughness = .init(floatLiteral: 0.40)
+        hullSteel.metallic = .init(floatLiteral: 0.85)
+
+        var darkArmor = SimpleMaterial()
+        if let hullTex = loadAssetTexture("tex_ship_hull_plating") {
+            darkArmor.color = .init(tint: UIColor(red: 0.42, green: 0.46, blue: 0.54, alpha: 1.0), texture: .init(hullTex))
+        } else {
+            darkArmor.color = .init(tint: UIColor(red: 0.13, green: 0.15, blue: 0.19, alpha: 1.0))
+        }
+        darkArmor.roughness = .init(floatLiteral: 0.52)
+        darkArmor.metallic = .init(floatLiteral: 0.85)
         let goldAccent = SimpleMaterial(
             color: UIColor(red: 0.86, green: 0.62, blue: 0.28, alpha: 1.0),
             roughness: 0.28,

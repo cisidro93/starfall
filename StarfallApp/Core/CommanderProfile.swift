@@ -15,6 +15,16 @@ struct ShipHullCatalogItem: Identifiable, Sendable {
     let jumpRangeBonusLY: Double
     let weaponDamageMultiplier: Float
     let flightSpec: ShipSpec
+
+    var artworkAssetName: String {
+        switch id {
+        case "sf2a_viper": return "art_ship_viper"
+        case "sf4c_cobra": return "art_ship_cobra"
+        case "sf7t_atlas": return "art_ship_atlas"
+        case "sf9x_astrolabe": return "art_ship_astrolabe"
+        default: return "art_ship_kestrel"
+        }
+    }
 }
 
 struct CommodityItem: Identifiable, Sendable {
